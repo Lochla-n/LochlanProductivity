@@ -104,14 +104,14 @@ namespace LochlanProductivity
         private readonly string saveDirectory =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.LocalApplicationData),
-                "LochlanProductivity");
+                    Environment.SpecialFolder.UserProfile),
+                "LochlanProductivityData");
 
         private readonly string saveFilePath =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.LocalApplicationData),
-                "LochlanProductivity",
+                    Environment.SpecialFolder.UserProfile),
+                "LochlanProductivityData",
                 "tasks.json");
 
         // ============================================================

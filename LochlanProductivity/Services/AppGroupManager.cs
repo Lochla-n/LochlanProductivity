@@ -18,8 +18,8 @@ namespace LochlanProductivity.Services
         private readonly string saveFilePath =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.LocalApplicationData),
-                "LochlanProductivity",
+                    Environment.SpecialFolder.UserProfile),
+                "LochlanProductivityData",
                 "appgroups.json");
 
         // ============================================================
