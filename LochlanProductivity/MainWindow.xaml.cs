@@ -1,0 +1,4348 @@
+using LochlanProductivity.Services;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Windows.ApplicationModel.Appointments;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
+
+namespace LochlanProductivity
+{
+    public sealed partial class MainWindow : Window
+    {
+        // ============================================================
+        // SERVICES
+        // ============================================================
+
+        private readonly SyncManager syncManager = new();
+
+
+        private readonly TaskRecurrenceManager taskRecurrenceManager = new();
+
+        private readonly AppBlockingService blockingService = new();
+
+        private readonly AppGroupManager groupManager = new();
+
+        private readonly ScheduleManager scheduleManager = new();
+
+        private readonly PolicyManager policyManager;
+
+        private readonly DailyPromptManager dailyPromptManager = new();
+
+        private readonly TaskRecurrenceManager recurrenceManager = new();
+
+        // ============================================================
+        // TASKS
+        // ============================================================
+
+        private readonly List<TodoTask> tasks = new();
+
+        // ============================================================
+        // BLOCKING
+        // ============================================================
+
+        private DispatcherTimer? blockingTimer;
+
+        private string? lastBlockedNotification;
+
+        // ============================================================
+        // AVAILABLE APPLICATIONS
+        // ============================================================
+        private SyncData CreateCurrentSyncData()
+        {
+            return syncManager.CreateSyncData(
+                tasks,
+                groupManager.Groups,
+                scheduleManager.Schedules);
+        }
+
+        private async Task SaveCurrentSyncDataAsync()
+        {
+            SyncData data = CreateCurrentSyncData();
+
+            await syncManager.SaveSyncDataAsync(data);
+        }
+
+        private readonly List<BlockedApp> availableApps = new()
+        {
+            new BlockedApp
+            {
+                Name = "Steam",
+                ExecutablePath = "steam.exe"
+            },
+
+            new BlockedApp
+            {
+                Name = "MTG Arena",
+                ExecutablePath = "MTGA.exe"
+            },
+
+            new BlockedApp
+            {
+                Name = "Discord",
+                ExecutablePath = "Discord.exe"
+            },
+
+            new BlockedApp
+            {
+                Name = "Minecraft",
+                ExecutablePath = "MinecraftLauncher.exe"
+            }
+        };
+
+        // ============================================================
+        // SAVE FILES
+        // ============================================================
+
+        private readonly string saveDirectory =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity");
+
+        private readonly string saveFilePath =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity",
+                "tasks.json");
+
+        // ============================================================
+        // CONSTRUCTOR
+        // ============================================================
+
+        public MainWindow()
+        {
+            InitializeComponent();
+
+            policyManager =
+                new PolicyManager(groupManager);
+
+            StartBlockingTimer();
+
+            if (this.Content is FrameworkElement root)
+            {
+                root.Loaded += MainWindow_ContentLoaded;
+            }
+        }
+
+        private async void MainWindow_ContentLoaded(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement root)
+            {
+                root.Loaded -= MainWindow_ContentLoaded;
+            }
+
+            await InitializeAsync();
+        }
+
+        private async System.Threading.Tasks.Task InitializeAsync()
+        {
+            // Load groups first because tasks can reference groups.
+            await LoadAppGroupsAsync();
+
+            // Load saved tasks.
+            await LoadTasksAsync();
+
+            // Activate recurring tasks that have become due.
+            taskRecurrenceManager.UpdateRecurringTasks(tasks);
+
+            // Display whatever was loaded.
+            RefreshTaskList();
+
+            UpdateFocusModeLock();
+
+            UpdateScheduledBlockingState();
+
+            UpdateBlockingStatus();
+
+            await CheckDailyPromptAsync();
+        }
+
+        // ============================================================
+        // FOCUS MODE LOCK STATE
+        // ============================================================
+
+        private bool HasIncompleteTasks =>
+            tasks.Any(task => !task.IsCompleted);
+
+        private bool IsFocusModeLocked =>
+            HasIncompleteTasks;
+
+        private void UpdateFocusModeLock()
+        {
+            if (HasIncompleteTasks)
+            {
+                if (!blockingService.IsMonitoring)
+                {
+                    blockingService.StartMonitoring();
+                }
+
+                BlockingButton.Content =
+                    "Focus Mode Locked";
+
+                BlockingStatusText.Text =
+                    "Focus Mode is locked until all tasks are complete.";
+
+                return;
+            }
+
+            BlockingButton.Content =
+                blockingService.IsMonitoring
+                    ? "Stop Focus Mode"
+                    : "Start Focus Mode";
+
+            BlockingStatusText.Text =
+                blockingService.IsMonitoring
+                    ? "Focus Mode is ON."
+                    : "Focus Mode is OFF.";
+        }
+
+        // ============================================================
+        // DAILY STARTUP PROMPT
+        // ============================================================
+
+        private async System.Threading.Tasks.Task CheckDailyPromptAsync()
+        {
+            // If there are already unfinished tasks, don't ask the user
+            // to create another daily task list.
+            //
+            // This is especially important after restarting the app:
+            // saved tasks should simply reappear.
+            if (tasks.Any(task => !task.IsCompleted))
+            {
+                return;
+            }
+
+            // If today's prompt was already shown, don't show it again.
+            if (!dailyPromptManager.ShouldShowPrompt())
+            {
+                return;
+            }
+
+            while (true)
+            {
+                TextBox taskBox =
+                    new TextBox
+                    {
+                        PlaceholderText =
+                            "What do you need to get done today?",
+
+                        AcceptsReturn = false
+                    };
+
+                ContentDialog dialog =
+                    new ContentDialog
+                    {
+                        Title =
+                            "Plan Your Day",
+
+                        Content =
+                            new StackPanel
+                            {
+                                Spacing = 10,
+
+                                Children =
+                                {
+                            new TextBlock
+                            {
+                                Text =
+                                    "Before you get started, " +
+                                    "add at least one thing you " +
+                                    "need to accomplish today.",
+
+                                TextWrapping =
+                                    TextWrapping.Wrap,
+
+                                Opacity = 0.8
+                            },
+
+                            taskBox
+                                }
+                            },
+
+                        PrimaryButtonText =
+                            "Add Task",
+
+                        XamlRoot =
+                            this.Content.XamlRoot
+                    };
+
+                ContentDialogResult result =
+                    await dialog.ShowAsync();
+
+                if (result != ContentDialogResult.Primary)
+                {
+                    continue;
+                }
+
+                string text =
+                    taskBox.Text.Trim();
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                await AddTaskForDailyPromptAsync(text);
+
+                dailyPromptManager.MarkPromptShown();
+
+                break;
+            }
+        }
+
+        private async System.Threading.Tasks.Task AddTaskForDailyPromptAsync(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            TodoTask task =
+                new TodoTask
+                {
+                    Title = text.Trim(),
+                    IsCompleted = false
+                };
+
+            policyManager.ApplyDefaultPolicy(task);
+
+            tasks.Add(task);
+
+            await SaveTasksAsync();
+
+            RefreshTaskList();
+        }
+
+        // ============================================================
+        // FOCUS MODE
+        // ============================================================
+        private async void ScheduledTasks_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            await OpenScheduledTasksDialogAsync();
+        }
+
+        private async System.Threading.Tasks.Task OpenScheduledTasksDialogAsync()
+        {
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 12
+                };
+
+            TextBlock description =
+                new TextBlock
+                {
+                    Text =
+                        "Create tasks that automatically become available " +
+                        "on a recurring schedule.",
+
+                    TextWrapping =
+                        TextWrapping.Wrap,
+
+                    Opacity = 0.7
+                };
+
+            panel.Children.Add(description);
+
+            Button newTaskButton =
+                new Button
+                {
+                    Content = "+ New Scheduled Task",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Left
+                };
+
+            panel.Children.Add(newTaskButton);
+
+            StackPanel taskList =
+                new StackPanel
+                {
+                    Spacing = 8
+                };
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content = taskList,
+
+                    Height = 400,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            panel.Children.Add(scrollViewer);
+
+            IEnumerable<TodoTask> recurringTasks =
+                tasks.Where(task => task.IsRecurring);
+
+            if (!recurringTasks.Any())
+            {
+                taskList.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "No scheduled tasks yet.\n\n" +
+                            "Click '+ New Scheduled Task' to create one.",
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Opacity = 0.65
+                    });
+            }
+            else
+            {
+                foreach (TodoTask task in recurringTasks)
+                {
+                    Border card =
+                        new Border
+                        {
+                            Padding =
+                                new Thickness(12),
+
+                            CornerRadius =
+                                new Microsoft.UI.Xaml.CornerRadius(8)
+                        };
+
+                    StackPanel cardContent =
+                        new StackPanel
+                        {
+                            Spacing = 3
+                        };
+
+                    cardContent.Children.Add(
+                        new TextBlock
+                        {
+                            Text = task.Title,
+
+                            FontSize = 16,
+
+                            FontWeight =
+                                Microsoft.UI.Text.FontWeights.SemiBold
+                        });
+
+                    cardContent.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                taskRecurrenceManager
+                                    .GetRecurrenceDescription(task),
+
+                            FontSize = 12,
+
+                            Opacity = 0.7
+                        });
+
+                    cardContent.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                $"Next due: {task.DueDate:d}",
+
+                            FontSize = 12,
+
+                            Opacity = 0.7
+                        });
+
+                    card.Child = cardContent;
+
+                    taskList.Children.Add(card);
+                }
+            }
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Scheduled Tasks",
+
+                    Content = panel,
+
+                    CloseButtonText = "Close",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            newTaskButton.Click +=
+                async (s, args) =>
+                {
+                    dialog.Hide();
+
+                    await CreateScheduledTaskAsync();
+                };
+
+            await dialog.ShowAsync();
+        }
+
+        private async System.Threading.Tasks.Task CreateScheduledTaskAsync()
+        {
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            TextBox taskNameBox =
+                new TextBox
+                {
+                    Header = "Task name",
+
+                    PlaceholderText =
+                        "Example: Clean cat litter"
+                };
+
+            content.Children.Add(taskNameBox);
+
+            ComboBox recurrenceBox =
+                new ComboBox
+                {
+                    Header = "Repeat",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Stretch
+                };
+
+            recurrenceBox.Items.Add("Every day");
+            recurrenceBox.Items.Add("Every N days");
+            recurrenceBox.Items.Add("Specific days of the week");
+
+            recurrenceBox.SelectedIndex = 0;
+
+            content.Children.Add(recurrenceBox);
+
+            // ------------------------------------------------------------
+            // EVERY N DAYS
+            // ------------------------------------------------------------
+
+            StackPanel intervalPanel =
+                new StackPanel
+                {
+                    Spacing = 6,
+
+                    Visibility =
+                        Visibility.Collapsed
+                };
+
+            NumberBox intervalBox =
+                new NumberBox
+                {
+                    Header = "Repeat every",
+
+                    Value = 2,
+
+                    Minimum = 1,
+
+                    //SpinButtonPlacementMode =
+                     //   Microsoft.UI.Xaml.Controls.SpinButtonPlacementMode.Compact
+                };
+
+            intervalPanel.Children.Add(intervalBox);
+
+            TextBlock intervalDescription =
+                new TextBlock
+                {
+                    Text = "days",
+
+                    Opacity = 0.65
+                };
+
+            intervalPanel.Children.Add(
+                intervalDescription);
+
+            content.Children.Add(intervalPanel);
+
+            // ------------------------------------------------------------
+            // DAYS OF WEEK
+            // ------------------------------------------------------------
+
+            StackPanel weeklyPanel =
+                new StackPanel
+                {
+                    Spacing = 4,
+
+                    Visibility =
+                        Visibility.Collapsed
+                };
+
+            weeklyPanel.Children.Add(
+                new TextBlock
+                {
+                    Text = "Repeat on",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold
+                });
+
+            Dictionary<DayOfWeek, CheckBox> dayBoxes =
+                new();
+
+            DayOfWeek[] days =
+            {
+        DayOfWeek.Monday,
+        DayOfWeek.Tuesday,
+        DayOfWeek.Wednesday,
+        DayOfWeek.Thursday,
+        DayOfWeek.Friday,
+        DayOfWeek.Saturday,
+        DayOfWeek.Sunday
+    };
+
+            string[] dayNames =
+            {
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+    };
+
+            for (int i = 0; i < days.Length; i++)
+            {
+                CheckBox checkBox =
+                    new CheckBox
+                    {
+                        Content = dayNames[i]
+                    };
+
+                dayBoxes.Add(
+                    days[i],
+                    checkBox);
+
+                weeklyPanel.Children.Add(
+                    checkBox);
+            }
+
+            content.Children.Add(weeklyPanel);
+
+            // ------------------------------------------------------------
+            // FIRST DUE DATE
+            // ------------------------------------------------------------
+
+            DatePicker dueDatePicker =
+                new DatePicker
+                {
+                    Header = "First due date",
+
+                    Date = DateTimeOffset.Now
+                };
+
+            content.Children.Add(
+                dueDatePicker);
+
+            // ------------------------------------------------------------
+            // CHANGE OPTIONS WHEN RECURRENCE CHANGES
+            // ------------------------------------------------------------
+
+            recurrenceBox.SelectionChanged +=
+                (s, args) =>
+                {
+                    intervalPanel.Visibility =
+                        recurrenceBox.SelectedIndex == 1
+                            ? Visibility.Visible
+                            : Visibility.Collapsed;
+
+                    weeklyPanel.Visibility =
+                        recurrenceBox.SelectedIndex == 2
+                            ? Visibility.Visible
+                            : Visibility.Collapsed;
+                };
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content = content,
+
+                    MaxHeight = 550,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Create Scheduled Task",
+
+                    Content = scrollViewer,
+
+                    PrimaryButtonText = "Create",
+
+                    CloseButtonText = "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string title =
+                taskNameBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                await ShowSimpleMessageAsync(
+                    "Please enter a task name.");
+
+                return;
+            }
+
+            DateTime dueDate =
+                dueDatePicker.Date.Date;
+
+            TodoTask task =
+                new TodoTask
+                {
+                    Title = title,
+
+                    IsRecurring = true,
+
+                    IsCompleted = false,
+
+                    DueDate = dueDate,
+
+                    BlockedGroups = new List<string>(),
+
+                    BlockedApps = new List<BlockedApp>()
+                };
+
+            // ------------------------------------------------------------
+            // RECURRENCE TYPE
+            // ------------------------------------------------------------
+
+            switch (recurrenceBox.SelectedIndex)
+            {
+                case 0:
+
+                    task.Recurrence =
+                        RecurrenceType.Daily;
+
+                    task.RecurrenceInterval = 1;
+
+                    break;
+
+                case 1:
+
+                    task.Recurrence =
+                        RecurrenceType.EveryNDays;
+
+                    task.RecurrenceInterval =
+                        Math.Max(
+                            1,
+                            (int)intervalBox.Value);
+
+                    break;
+
+                case 2:
+
+                    task.Recurrence =
+                        RecurrenceType.WeeklyDays;
+
+                    task.RecurrenceDays =
+                        dayBoxes
+                            .Where(
+                                pair =>
+                                    pair.Value.IsChecked == true)
+                            .Select(
+                                pair =>
+                                    pair.Key)
+                            .ToList();
+
+                    if (task.RecurrenceDays.Count == 0)
+                    {
+                        await ShowSimpleMessageAsync(
+                            "Please select at least one day.");
+
+                        return;
+                    }
+
+                    break;
+            }
+
+            // ------------------------------------------------------------
+            // DEFAULT BLOCKING POLICY
+            // ------------------------------------------------------------
+
+            policyManager.ApplyDefaultPolicy(task);
+
+            tasks.Add(task);
+
+            await SaveTasksAsync();
+
+            RefreshTaskList();
+        }
+
+        private async void BlockingButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (HasIncompleteTasks)
+            {
+                if (!blockingService.IsMonitoring)
+                {
+                    blockingService.StartMonitoring();
+                }
+
+                BlockingButton.Content =
+                    "Focus Mode Locked";
+
+                await ShowSimpleMessageAsync(
+                    "Focus Mode is locked.\n\n" +
+                    "Complete all of your tasks before Focus Mode can be turned off.");
+
+                UpdateBlockingStatus();
+
+                return;
+            }
+
+            if (blockingService.IsMonitoring)
+            {
+                blockingService.StopMonitoring();
+
+                BlockingButton.Content =
+                    "Start Focus Mode";
+
+                BlockingStatusText.Text =
+                    "Focus Mode is OFF.";
+
+                UpdateBlockingStatus();
+
+                return;
+            }
+
+            blockingService.StartMonitoring();
+
+            BlockingButton.Content =
+                "Stop Focus Mode";
+
+            BlockingStatusText.Text =
+                "Focus Mode is ON.";
+
+            UpdateBlockingStatus();
+        }
+
+        private void StartBlockingTimer()
+        {
+            blockingTimer?.Stop();
+
+            blockingTimer =
+                new DispatcherTimer
+                {
+                    Interval =
+                        TimeSpan.FromSeconds(1)
+                };
+
+            blockingTimer.Tick += BlockingTimer_Tick;
+
+            blockingTimer.Start();
+        }
+
+        private void StopBlockingTimer()
+        {
+            if (blockingTimer == null)
+                return;
+
+            blockingTimer.Stop();
+
+            blockingTimer = null;
+        }
+
+        private void BlockingTimer_Tick(
+            object? sender,
+            object e)
+        {
+            if (HasIncompleteTasks &&
+                !blockingService.IsMonitoring)
+            {
+                blockingService.StartMonitoring();
+            }
+
+            UpdateFocusModeLock();
+
+            UpdateScheduledBlockingState();
+
+            EnforceBlocking();
+
+            UpdateBlockingStatus();
+        }
+
+        private void UpdateScheduledBlockingState()
+        {
+            bool scheduleActive =
+                scheduleManager.IsBlockingScheduledNow();
+
+            blockingService.SetScheduledMonitoring(
+                scheduleActive);
+        }
+
+        // ============================================================
+        // ENFORCEMENT
+        // ============================================================
+
+        private void EnforceBlocking()
+        {
+            if (!blockingService.IsBlockingActive)
+                return;
+
+            foreach (TodoTask task in tasks)
+            {
+                policyManager.ExpandTaskGroups(task);
+            }
+
+            List<BlockedAppStatus> blockedApps =
+                blockingService.EnforceBlocking(tasks);
+
+            if (blockedApps.Count == 0)
+                return;
+
+            BlockedAppStatus blocked =
+                blockedApps[0];
+
+            string notificationKey =
+                $"{blocked.App.ExecutablePath}|{blocked.Task.Title}";
+
+            if (notificationKey ==
+                lastBlockedNotification)
+            {
+                return;
+            }
+
+            lastBlockedNotification =
+                notificationKey;
+
+            ShowBlockedAppNotification(
+                blocked.App.Name,
+                blocked.Task.Title);
+        }
+
+        private void ShowBlockedAppNotification(
+            string appName,
+            string taskName)
+        {
+            BlockedAppNotificationTitle.Text =
+                $"🔒 {appName} blocked";
+
+            BlockedAppNotificationMessage.Text =
+                $"Complete \"{taskName}\" to unlock {appName}.";
+
+            BlockedAppNotification.Visibility =
+                Visibility.Visible;
+        }
+
+        private void HideBlockedAppNotification()
+        {
+            BlockedAppNotification.Visibility =
+                Visibility.Collapsed;
+
+            BlockedAppNotificationTitle.Text = "";
+
+            BlockedAppNotificationMessage.Text = "";
+
+            lastBlockedNotification = null;
+        }
+
+        // ============================================================
+        // STATUS
+        // ============================================================
+
+        private void UpdateBlockingStatus()
+        {
+            if (!blockingService.IsBlockingActive)
+                return;
+
+            foreach (TodoTask task in tasks)
+            {
+                policyManager.ExpandTaskGroups(task);
+            }
+
+            List<BlockedAppStatus> statuses =
+                blockingService.CheckBlockedApps(tasks);
+
+            // --------------------------------------------------------
+            // COUNT UNIQUE APPLICATIONS
+            // --------------------------------------------------------
+            //
+            // The same EXE can be associated with multiple tasks.
+            // Only count each executable once.
+            //
+            // Task 1 -> Steam
+            // Task 2 -> Steam
+            // Task 3 -> Discord
+            //
+            // Result:
+            // 2 unique applications
+            // --------------------------------------------------------
+
+            List<BlockedAppStatus> uniqueStatuses =
+                statuses
+                    .GroupBy(
+                        status =>
+                            status.App.ExecutablePath,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        group =>
+                            group.First())
+                    .ToList();
+
+            int blockedAppCount =
+                uniqueStatuses.Count;
+
+            int runningBlockedApps =
+                uniqueStatuses.Count(
+                    status =>
+                        status.IsRunning);
+
+            if (blockedAppCount == 0)
+            {
+                BlockedAppStatusText.Text =
+                    "No incomplete tasks have blocked apps.";
+
+                return;
+            }
+
+            if (runningBlockedApps == 0)
+            {
+                BlockedAppStatusText.Text =
+                    $"{blockedAppCount} unique app(s) being monitored.";
+
+                return;
+            }
+
+            BlockedAppStatusText.Text =
+                $"{runningBlockedApps} blocked app(s) detected " +
+                $"({blockedAppCount} unique app(s) monitored).";
+        }
+
+        // ============================================================
+        // ADD TASK
+        // ============================================================
+
+        private void AddTask_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AddTask();
+        }
+
+        private void TaskInput_KeyDown(
+            object sender,
+            KeyRoutedEventArgs e)
+        {
+            if (e.Key ==
+                Windows.System.VirtualKey.Enter)
+            {
+                AddTask();
+            }
+        }
+
+        private async void AddTask()
+        {
+            string text =
+                TaskInput.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            TodoTask task =
+                new TodoTask
+                {
+                    Title = text,
+
+                    IsCompleted = false,
+
+                    BlockedGroups =
+                        new List<string>()
+                };
+
+            if (groupManager.Groups.Any(
+                group =>
+                    group.Id.Equals(
+                        "games",
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                task.BlockedGroups.Add("games");
+            }
+
+            policyManager.ApplyDefaultPolicy(task);
+
+            tasks.Add(task);
+
+            TaskInput.Text = "";
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+            await SaveCurrentSyncDataAsync();
+        }
+
+        // ============================================================
+        // REMOVE TASK
+        // ============================================================
+
+        private async void RemoveTask(
+            TodoTask task)
+        {
+            if (!task.IsCompleted)
+            {
+                await ShowSimpleMessageAsync(
+                    "This task cannot be removed while it is incomplete.\n\n" +
+                    "Complete the task first.");
+
+                return;
+            }
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        "Remove task?",
+
+                    Content =
+                        $"Are you sure you want to remove \"{task.Title}\"?",
+
+                    PrimaryButtonText =
+                        "Remove",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    DefaultButton =
+                        ContentDialogButton.Close,
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            tasks.Remove(task);
+
+            lastBlockedNotification = null;
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+
+            UpdateFocusModeLock();
+
+            UpdateBlockingStatus();
+        }
+
+        // ============================================================
+        // TASK LIST
+        // ============================================================
+
+        private void RefreshTaskList()
+        {
+            TaskList.Children.Clear();
+
+            foreach (TodoTask task in tasks)
+            {
+                Grid taskRow =
+                    new Grid
+                    {
+                        Padding =
+                            new Thickness(12)
+                    };
+
+                taskRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width =
+                            new GridLength(
+                                1,
+                                GridUnitType.Star)
+                    });
+
+                taskRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width =
+                            GridLength.Auto
+                    });
+
+                taskRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width =
+                            GridLength.Auto
+                    });
+
+                // ----------------------------------------------------
+                // CHECKBOX
+                // ----------------------------------------------------
+
+                CheckBox checkBox =
+                    new CheckBox
+                    {
+                        Content =
+                            task.Title,
+
+                        IsChecked =
+                            task.IsCompleted,
+
+                        FontSize = 16,
+
+                        VerticalAlignment =
+                            VerticalAlignment.Center
+                    };
+
+                checkBox.Checked +=
+                    async (sender, e) =>
+                    {
+                        task.IsCompleted = true;
+
+                        lastBlockedNotification = null;
+
+                        await SaveTasksAsync();
+
+                        UpdateFocusModeLock();
+
+                        UpdateBlockingStatus();
+                    };
+
+                checkBox.Unchecked +=
+                    async (sender, e) =>
+                    {
+                        task.IsCompleted = false;
+
+                        lastBlockedNotification = null;
+
+                        blockingService.StartMonitoring();
+
+                        UpdateFocusModeLock();
+
+                        await SaveTasksAsync();
+
+                        UpdateBlockingStatus();
+                    };
+
+                Grid.SetColumn(
+                    checkBox,
+                    0);
+
+                // ----------------------------------------------------
+                // BLOCKED APPS BUTTON
+                // ----------------------------------------------------
+
+                Button blockedAppsButton =
+                    new Button
+                    {
+                        Content =
+                            GetBlockedAppsButtonText(task),
+
+                        VerticalAlignment =
+                            VerticalAlignment.Center,
+
+                        Margin =
+                            new Thickness(
+                                12,
+                                0,
+                                6,
+                                0)
+                    };
+
+                blockedAppsButton.Click +=
+                    (sender, e) =>
+                    {
+                        OpenBlockedAppsDialog(task);
+                    };
+
+                Grid.SetColumn(
+                    blockedAppsButton,
+                    1);
+
+                // ----------------------------------------------------
+                // REMOVE BUTTON
+                // ----------------------------------------------------
+
+                Button removeButton =
+                    new Button
+                    {
+                        Content =
+                            "Remove",
+
+                        VerticalAlignment =
+                            VerticalAlignment.Center
+                    };
+
+                removeButton.Click +=
+                    (sender, e) =>
+                    {
+                        RemoveTask(task);
+                    };
+
+                Grid.SetColumn(
+                    removeButton,
+                    2);
+
+                taskRow.Children.Add(checkBox);
+
+                taskRow.Children.Add(blockedAppsButton);
+
+                taskRow.Children.Add(removeButton);
+
+                TaskList.Children.Add(taskRow);
+            }
+        }
+
+        private string GetBlockedAppsButtonText(
+            TodoTask task)
+        {
+            List<BlockedApp> effectiveApps =
+                policyManager
+                    .GetEffectiveBlockedApps(task);
+
+            // Deduplicate applications by executable path.
+            int count =
+                effectiveApps
+                    .GroupBy(
+                        app =>
+                            app.ExecutablePath,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+            if (count == 0)
+                return "No blocked apps";
+
+            if (count == 1)
+                return "1 blocked app";
+
+            return $"{count} blocked apps";
+        }
+
+        // ============================================================
+        // TASK BLOCKING DIALOG
+        // ============================================================
+
+        private async void OpenBlockedAppsDialog(
+            TodoTask task)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Blocked app settings are locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before changing blocking settings.");
+
+                return;
+            }
+
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 8
+                };
+
+            TextBlock instructions =
+                new TextBlock
+                {
+                    Text =
+                        "Choose app groups and individual applications " +
+                        "that should be blocked until this task is completed.",
+
+                    TextWrapping =
+                        TextWrapping.Wrap,
+
+                    Opacity = 0.75
+                };
+
+            panel.Children.Add(
+                instructions);
+
+            // --------------------------------------------------------
+            // GROUPS
+            // --------------------------------------------------------
+
+            TextBlock groupsHeader =
+                new TextBlock
+                {
+                    Text =
+                        "App groups",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            2)
+                };
+
+            panel.Children.Add(
+                groupsHeader);
+
+            Dictionary<CheckBox, AppGroup>
+                groupCheckBoxes =
+                    new();
+
+            foreach (AppGroup group
+                in groupManager.Groups)
+            {
+                bool selected =
+                    task.BlockedGroups.Any(
+                        groupId =>
+                            groupId.Equals(
+                                group.Id,
+                                StringComparison.OrdinalIgnoreCase));
+
+                CheckBox groupCheckBox =
+                    new CheckBox
+                    {
+                        Content =
+                            string.IsNullOrWhiteSpace(
+                                group.Description)
+                                ? group.Name
+                                : $"{group.Name} — " +
+                                  group.Description,
+
+                        IsChecked =
+                            selected
+                    };
+
+                groupCheckBoxes.Add(
+                    groupCheckBox,
+                    group);
+
+                panel.Children.Add(
+                    groupCheckBox);
+            }
+
+            if (groupManager.Groups.Count == 0)
+            {
+                panel.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "No groups have been created yet. " +
+                            "Use Manage App Groups to create one.",
+
+                        Opacity = 0.65,
+
+                        TextWrapping =
+                            TextWrapping.Wrap
+                    });
+            }
+
+            // --------------------------------------------------------
+            // INDIVIDUAL APPLICATIONS
+            // --------------------------------------------------------
+
+            TextBlock appsHeader =
+                new TextBlock
+                {
+                    Text =
+                        "Additional applications",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            10,
+                            0,
+                            2)
+                };
+
+            panel.Children.Add(
+                appsHeader);
+
+            StackPanel appList =
+                new StackPanel
+                {
+                    Spacing = 4
+                };
+
+            panel.Children.Add(
+                appList);
+
+            Dictionary<CheckBox, BlockedApp>
+                checkBoxes =
+                    new();
+
+            // Apps already covered by any group aren't shown
+            // as individual apps.
+            List<BlockedApp> groupApps =
+                new();
+
+            foreach (AppGroup group
+                in groupManager.Groups)
+            {
+                foreach (BlockedApp app
+                    in group.Apps)
+                {
+                    if (!groupApps.Any(
+                        existing =>
+                            PathsEqual(
+                                existing.ExecutablePath,
+                                app.ExecutablePath)))
+                    {
+                        groupApps.Add(app);
+                    }
+                }
+            }
+
+            foreach (BlockedApp app
+                in availableApps)
+            {
+                bool belongsToGroup =
+                    groupApps.Any(
+                        groupApp =>
+                            PathsEqual(
+                                groupApp.ExecutablePath,
+                                app.ExecutablePath));
+
+                if (belongsToGroup)
+                    continue;
+
+                bool selected =
+                    task.BlockedApps.Any(
+                        existing =>
+                            PathsEqual(
+                                existing.ExecutablePath,
+                                app.ExecutablePath));
+
+                AddCheckboxIfMissing(
+                    app,
+                    appList,
+                    checkBoxes,
+                    selected);
+            }
+
+            // --------------------------------------------------------
+            // BROWSE FOR EXE
+            // --------------------------------------------------------
+
+            Button browseButton =
+                new Button
+                {
+                    Content =
+                        "+ Browse for EXE",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Left,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            12,
+                            0,
+                            0)
+                };
+
+            browseButton.Click +=
+                async (sender, e) =>
+                {
+                    await AddApplicationFromPickerAsync(
+                        appList,
+                        checkBoxes);
+                };
+
+            panel.Children.Add(
+                browseButton);
+
+            // --------------------------------------------------------
+            // DETECT
+            // --------------------------------------------------------
+
+            Button detectButton =
+                new Button
+                {
+                    Content =
+                        "🔍 Detect running applications",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Left,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            6,
+                            0,
+                            0)
+                };
+
+            detectButton.Click +=
+                (sender, e) =>
+                {
+                    DetectRunningApplications(
+                        appList,
+                        checkBoxes);
+                };
+
+            panel.Children.Add(
+                detectButton);
+
+            // --------------------------------------------------------
+            // SCROLLABLE DIALOG CONTENT
+            // --------------------------------------------------------
+
+            ScrollViewer dialogScrollViewer =
+                new ScrollViewer
+                {
+                    Content =
+                        panel,
+
+                    MaxHeight =
+                        600,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        $"Blocked Apps — {task.Title}",
+
+                    Content =
+                        dialogScrollViewer,
+
+                    PrimaryButtonText =
+                        "Save",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result !=
+                ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            // --------------------------------------------------------
+            // SAVE GROUPS
+            // --------------------------------------------------------
+
+            task.BlockedGroups.Clear();
+
+            foreach (
+                KeyValuePair<
+                    CheckBox,
+                    AppGroup> pair
+                in groupCheckBoxes)
+            {
+                if (pair.Key.IsChecked == true)
+                {
+                    task.BlockedGroups.Add(
+                        pair.Value.Id);
+                }
+            }
+
+            // --------------------------------------------------------
+            // SAVE INDIVIDUAL APPS
+            // --------------------------------------------------------
+
+            task.BlockedApps.Clear();
+
+            foreach (
+                KeyValuePair<
+                    CheckBox,
+                    BlockedApp> pair
+                in checkBoxes)
+            {
+                if (pair.Key.IsChecked == true)
+                {
+                    BlockedApp app =
+                        pair.Value;
+
+                    task.BlockedApps.Add(
+                        new BlockedApp
+                        {
+                            Name =
+                                app.Name,
+
+                            ExecutablePath =
+                                app.ExecutablePath
+                        });
+                }
+            }
+
+            policyManager.ExpandTaskGroups(task);
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+
+            UpdateBlockingStatus();
+        }
+
+        // ============================================================
+        // SCHEDULED BLOCKING
+        // ============================================================
+
+        private async void ManageSchedules_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Schedule settings are locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before changing schedules.");
+
+                return;
+            }
+
+            while (true)
+            {
+                bool createNewSchedule = false;
+
+                BlockingSchedule? selectedSchedule = null;
+
+                StackPanel mainPanel =
+                    new StackPanel
+                    {
+                        Spacing = 12
+                    };
+
+                TextBlock description =
+                    new TextBlock
+                    {
+                        Text =
+                            "Automatically enable Focus Mode during specific " +
+                            "times and days.",
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Opacity = 0.7
+                    };
+
+                mainPanel.Children.Add(
+                    description);
+
+                Button newScheduleButton =
+                    new Button
+                    {
+                        Content =
+                            "+ New Schedule",
+
+                        HorizontalAlignment =
+                            HorizontalAlignment.Left
+                    };
+
+                mainPanel.Children.Add(
+                    newScheduleButton);
+
+                StackPanel scheduleList =
+                    new StackPanel
+                    {
+                        Spacing = 8
+                    };
+
+                ScrollViewer scheduleScrollViewer =
+                    new ScrollViewer
+                    {
+                        Content =
+                            scheduleList,
+
+                        Height = 420,
+
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto,
+
+                        HorizontalScrollBarVisibility =
+                            ScrollBarVisibility.Disabled
+                    };
+
+                mainPanel.Children.Add(
+                    scheduleScrollViewer);
+
+                bool scheduleCurrentlyActive =
+                    scheduleManager.IsBlockingScheduledNow();
+
+                Border statusCard =
+                    new Border
+                    {
+                        Padding =
+                            new Thickness(12),
+
+                        CornerRadius =
+                            new Microsoft.UI.Xaml.CornerRadius(8),
+
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.Colors.Transparent)
+                    };
+
+                StackPanel statusPanel =
+                    new StackPanel
+                    {
+                        Spacing = 3
+                    };
+
+                TextBlock statusTitle =
+                    new TextBlock
+                    {
+                        Text =
+                            scheduleCurrentlyActive
+                                ? "● A schedule is active"
+                                : "○ No schedule is active",
+
+                        FontWeight =
+                            Microsoft.UI.Text.FontWeights.SemiBold
+                    };
+
+                TextBlock statusDescription =
+                    new TextBlock
+                    {
+                        Text =
+                            scheduleCurrentlyActive
+                                ? "Scheduled blocking is currently active."
+                                : "No scheduled blocking is currently active.",
+
+                        FontSize = 12,
+
+                        Opacity = 0.65
+                    };
+
+                statusPanel.Children.Add(
+                    statusTitle);
+
+                statusPanel.Children.Add(
+                    statusDescription);
+
+                statusCard.Child =
+                    statusPanel;
+
+                mainPanel.Children.Add(
+                    statusCard);
+
+                foreach (
+                    BlockingSchedule schedule
+                    in scheduleManager.Schedules)
+                {
+                    Border card =
+                        CreateScheduleCard(
+                            schedule,
+                            () =>
+                            {
+                                selectedSchedule =
+                                    schedule;
+                            });
+
+                    scheduleList.Children.Add(
+                        card);
+                }
+
+                if (scheduleManager.Schedules.Count == 0)
+                {
+                    Border emptyCard =
+                        new Border
+                        {
+                            Padding =
+                                new Thickness(16),
+
+                            CornerRadius =
+                                new Microsoft.UI.Xaml.CornerRadius(8)
+                        };
+
+                    TextBlock emptyText =
+                        new TextBlock
+                        {
+                            Text =
+                                "No schedules have been created yet.\n\n" +
+                                "Click '+ New Schedule' to create one.",
+
+                            TextWrapping =
+                                TextWrapping.Wrap,
+
+                            Opacity = 0.65
+                        };
+
+                    emptyCard.Child =
+                        emptyText;
+
+                    scheduleList.Children.Add(
+                        emptyCard);
+                }
+
+                ContentDialog dialog =
+                    new ContentDialog
+                    {
+                        Title =
+                            "Scheduled Blocking",
+
+                        Content =
+                            mainPanel,
+
+                        CloseButtonText =
+                            "Close",
+
+                        XamlRoot =
+                            this.Content.XamlRoot
+                    };
+
+                newScheduleButton.Click +=
+                    (s, args) =>
+                    {
+                        createNewSchedule = true;
+
+                        dialog.Hide();
+                    };
+
+                await dialog.ShowAsync();
+
+                if (createNewSchedule)
+                {
+                    await CreateScheduleAsync();
+
+                    continue;
+                }
+
+                if (selectedSchedule != null)
+                {
+                    await EditScheduleAsync(
+                        selectedSchedule);
+
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        private Border CreateScheduleCard(
+            BlockingSchedule schedule,
+            Action editAction)
+        {
+            Border card =
+                new Border
+                {
+                    Padding =
+                        new Thickness(12),
+
+                    CornerRadius =
+                        new Microsoft.UI.Xaml.CornerRadius(8)
+                };
+
+            Grid grid =
+                new Grid();
+
+            grid.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width =
+                        new GridLength(
+                            1,
+                            GridUnitType.Star)
+                });
+
+            grid.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width =
+                        GridLength.Auto
+                });
+
+            StackPanel information =
+                new StackPanel
+                {
+                    Spacing = 3
+                };
+
+            TextBlock name =
+                new TextBlock
+                {
+                    Text =
+                        schedule.Name,
+
+                    FontSize = 16,
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold
+                };
+
+            TextBlock days =
+                new TextBlock
+                {
+                    Text =
+                        schedule.GetDaysDescription(),
+
+                    FontSize = 12,
+
+                    Opacity = 0.7
+                };
+
+            TextBlock time =
+                new TextBlock
+                {
+                    Text =
+                        schedule.GetTimeDescription(),
+
+                    FontSize = 13
+                };
+
+            TextBlock status =
+                new TextBlock
+                {
+                    Text =
+                        schedule.IsEnabled
+                            ? "Enabled"
+                            : "Disabled",
+
+                    FontSize = 11,
+
+                    Opacity = 0.6
+                };
+
+            information.Children.Add(name);
+            information.Children.Add(days);
+            information.Children.Add(time);
+            information.Children.Add(status);
+
+            Grid.SetColumn(
+                information,
+                0);
+
+            Button editButton =
+                new Button
+                {
+                    Content =
+                        "Edit",
+
+                    VerticalAlignment =
+                        VerticalAlignment.Center,
+
+                    Margin =
+                        new Thickness(
+                            10,
+                            0,
+                            0,
+                            0)
+                };
+
+            editButton.Click +=
+                (sender, args) =>
+                {
+                    editAction();
+                };
+
+            Grid.SetColumn(
+                editButton,
+                1);
+
+            grid.Children.Add(
+                information);
+
+            grid.Children.Add(
+                editButton);
+
+            card.Child =
+                grid;
+
+            return card;
+        }
+
+        // ============================================================
+        // CREATE SCHEDULE
+        // ============================================================
+
+        private async System.Threading.Tasks.Task CreateScheduleAsync()
+        {
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 8
+                };
+
+            TextBox nameBox =
+                new TextBox
+                {
+                    Header =
+                        "Schedule name",
+
+                    PlaceholderText =
+                        "Example: School nights"
+                };
+
+            content.Children.Add(
+                nameBox);
+
+            TextBlock daysHeader =
+                new TextBlock
+                {
+                    Text =
+                        "Days",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                daysHeader);
+
+            Dictionary<DayOfWeek, CheckBox>
+                dayBoxes =
+                    new();
+
+            DayOfWeek[] days =
+            {
+                DayOfWeek.Monday,
+                DayOfWeek.Tuesday,
+                DayOfWeek.Wednesday,
+                DayOfWeek.Thursday,
+                DayOfWeek.Friday,
+                DayOfWeek.Saturday,
+                DayOfWeek.Sunday
+            };
+
+            string[] dayNames =
+            {
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday"
+            };
+
+            for (int i = 0; i < days.Length; i++)
+            {
+                DayOfWeek day =
+                    days[i];
+
+                CheckBox checkBox =
+                    new CheckBox
+                    {
+                        Content =
+                            dayNames[i],
+
+                        IsChecked =
+                            i < 5
+                    };
+
+                dayBoxes.Add(
+                    day,
+                    checkBox);
+
+                content.Children.Add(
+                    checkBox);
+            }
+
+            TimePicker startPicker =
+                new TimePicker
+                {
+                    Header =
+                        "Start time",
+
+                    Time =
+                        new TimeSpan(
+                            18,
+                            0,
+                            0),
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                startPicker);
+
+            TimePicker endPicker =
+                new TimePicker
+                {
+                    Header =
+                        "End time",
+
+                    Time =
+                        new TimeSpan(
+                            22,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                endPicker);
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content =
+                        content,
+
+                    MaxHeight =
+                        500,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        "Create Schedule",
+
+                    Content =
+                        scrollViewer,
+
+                    PrimaryButtonText =
+                        "Create",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result !=
+                ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string name =
+                nameBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                await ShowSimpleMessageAsync(
+                    "Please enter a schedule name.");
+
+                return;
+            }
+
+            List<DayOfWeek> selectedDays =
+                dayBoxes
+                    .Where(
+                        pair =>
+                            pair.Value.IsChecked == true)
+                    .Select(
+                        pair =>
+                            pair.Key)
+                    .ToList();
+
+            if (selectedDays.Count == 0)
+            {
+                await ShowSimpleMessageAsync(
+                    "Please select at least one day.");
+
+                return;
+            }
+
+            scheduleManager.CreateSchedule(
+                name,
+                selectedDays,
+                startPicker.Time,
+                endPicker.Time);
+        }
+
+        // ============================================================
+        // EDIT SCHEDULE
+        // ============================================================
+
+        private async System.Threading.Tasks.Task EditScheduleAsync(
+            BlockingSchedule schedule)
+        {
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 8
+                };
+
+            TextBox nameBox =
+                new TextBox
+                {
+                    Header =
+                        "Schedule name",
+
+                    Text =
+                        schedule.Name
+                };
+
+            content.Children.Add(
+                nameBox);
+
+            CheckBox enabledBox =
+                new CheckBox
+                {
+                    Content =
+                        "Schedule enabled",
+
+                    IsChecked =
+                        schedule.IsEnabled,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            4,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                enabledBox);
+
+            TextBlock daysHeader =
+                new TextBlock
+                {
+                    Text =
+                        "Days",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                daysHeader);
+
+            Dictionary<DayOfWeek, CheckBox>
+                dayBoxes =
+                    new();
+
+            DayOfWeek[] days =
+            {
+                DayOfWeek.Monday,
+                DayOfWeek.Tuesday,
+                DayOfWeek.Wednesday,
+                DayOfWeek.Thursday,
+                DayOfWeek.Friday,
+                DayOfWeek.Saturday,
+                DayOfWeek.Sunday
+            };
+
+            string[] dayNames =
+            {
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday"
+            };
+
+            for (int i = 0; i < days.Length; i++)
+            {
+                DayOfWeek day =
+                    days[i];
+
+                CheckBox checkBox =
+                    new CheckBox
+                    {
+                        Content =
+                            dayNames[i],
+
+                        IsChecked =
+                            schedule.Days.Contains(day)
+                    };
+
+                dayBoxes.Add(
+                    day,
+                    checkBox);
+
+                content.Children.Add(
+                    checkBox);
+            }
+
+            TimePicker startPicker =
+                new TimePicker
+                {
+                    Header =
+                        "Start time",
+
+                    Time =
+                        schedule.StartTime,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                startPicker);
+
+            TimePicker endPicker =
+                new TimePicker
+                {
+                    Header =
+                        "End time",
+
+                    Time =
+                        schedule.EndTime
+                };
+
+            content.Children.Add(
+                endPicker);
+
+            Button deleteButton =
+                new Button
+                {
+                    Content =
+                        "Delete Schedule",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Left,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            10,
+                            0,
+                            0)
+                };
+
+            content.Children.Add(
+                deleteButton);
+
+            bool deleteRequested =
+                false;
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content =
+                        content,
+
+                    MaxHeight =
+                        500,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        $"Edit Schedule — {schedule.Name}",
+
+                    Content =
+                        scrollViewer,
+
+                    PrimaryButtonText =
+                        "Save",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            deleteButton.Click +=
+                (s, args) =>
+                {
+                    deleteRequested = true;
+
+                    dialog.Hide();
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (deleteRequested)
+            {
+                bool confirmed =
+                    await ShowConfirmationAsync(
+                        "Delete Schedule",
+
+                        $"Are you sure you want to delete " +
+                        $"\"{schedule.Name}\"?");
+
+                if (confirmed)
+                {
+                    scheduleManager.DeleteSchedule(
+                        schedule.Id);
+                }
+
+                return;
+            }
+
+            if (result !=
+                ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string name =
+                nameBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                await ShowSimpleMessageAsync(
+                    "Please enter a schedule name.");
+
+                return;
+            }
+
+            List<DayOfWeek> selectedDays =
+                dayBoxes
+                    .Where(
+                        pair =>
+                            pair.Value.IsChecked == true)
+                    .Select(
+                        pair =>
+                            pair.Key)
+                    .ToList();
+
+            if (selectedDays.Count == 0)
+            {
+                await ShowSimpleMessageAsync(
+                    "Please select at least one day.");
+
+                return;
+            }
+
+            schedule.Name =
+                name;
+
+            schedule.IsEnabled =
+                enabledBox.IsChecked == true;
+
+            schedule.Days =
+                selectedDays;
+
+            schedule.StartTime =
+                startPicker.Time;
+
+            schedule.EndTime =
+                endPicker.Time;
+
+            scheduleManager.Save();
+        }
+
+        // ============================================================
+        // CHECKBOX GENERATION
+        // ============================================================
+
+        private void AddCheckboxIfMissing(
+            BlockedApp app,
+            StackPanel appList,
+            Dictionary<CheckBox, BlockedApp> checkBoxes,
+            bool checkedByDefault)
+        {
+            bool alreadyShown =
+                checkBoxes.Values.Any(
+                    existing =>
+                        PathsEqual(
+                            existing.ExecutablePath,
+                            app.ExecutablePath));
+
+            if (alreadyShown)
+                return;
+
+            StackPanel appContent =
+                new StackPanel
+                {
+                    Spacing = 1
+                };
+
+            appContent.Children.Add(
+                new TextBlock
+                {
+                    Text =
+                        app.Name
+                });
+
+            appContent.Children.Add(
+                new TextBlock
+                {
+                    Text =
+                        app.ExecutablePath,
+
+                    FontSize = 11,
+
+                    Opacity = 0.55
+                });
+
+            CheckBox checkBox =
+                new CheckBox
+                {
+                    Content =
+                        appContent,
+
+                    IsChecked =
+                        checkedByDefault
+                };
+
+            checkBoxes.Add(
+                checkBox,
+                app);
+
+            appList.Children.Add(
+                checkBox);
+        }
+
+        // ============================================================
+        // BROWSE FOR EXE
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            AddApplicationFromPickerAsync(
+                StackPanel appList,
+                Dictionary<CheckBox, BlockedApp> checkBoxes)
+        {
+            FileOpenPicker picker =
+                new FileOpenPicker();
+
+            picker.ViewMode =
+                PickerViewMode.List;
+
+            picker.SuggestedStartLocation =
+                PickerLocationId.ComputerFolder;
+
+            picker.FileTypeFilter.Add(
+                ".exe");
+
+            IntPtr hwnd =
+                WindowNative.GetWindowHandle(
+                    this);
+
+            InitializeWithWindow.Initialize(
+                picker,
+                hwnd);
+
+            StorageFile? file =
+                await picker.PickSingleFileAsync();
+
+            if (file == null)
+                return;
+
+            BlockedApp? existing =
+                availableApps.FirstOrDefault(
+                    app =>
+                        PathsEqual(
+                            app.ExecutablePath,
+                            file.Path));
+
+            BlockedApp app;
+
+            if (existing != null)
+            {
+                app = existing;
+            }
+            else
+            {
+                app =
+                    new BlockedApp
+                    {
+                        Name =
+                            Path.GetFileNameWithoutExtension(
+                                file.Name),
+
+                        ExecutablePath =
+                            file.Path
+                    };
+
+                availableApps.Add(app);
+            }
+
+            AddCheckboxIfMissing(
+                app,
+                appList,
+                checkBoxes,
+                true);
+        }
+
+        // ============================================================
+        // DETECT RUNNING APPLICATIONS
+        // ============================================================
+
+        private void DetectRunningApplications(
+            StackPanel appList,
+            Dictionary<CheckBox, BlockedApp> checkBoxes)
+        {
+            List<DetectedApplication>
+                detectedApplications =
+                    blockingService
+                        .GetRunningApplications();
+
+            if (detectedApplications.Count == 0)
+            {
+                appList.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "No accessible running applications were detected.",
+
+                        Opacity = 0.7,
+
+                        Margin =
+                            new Thickness(
+                                0,
+                                8,
+                                0,
+                                0),
+
+                        TextWrapping =
+                            TextWrapping.Wrap
+                    });
+
+                return;
+            }
+
+            List<DetectedApplication>
+                uniqueApplications =
+                    detectedApplications
+                        .GroupBy(
+                            app =>
+                                app.ExecutablePath,
+                            StringComparer.OrdinalIgnoreCase)
+                        .Select(
+                            group =>
+                                group.First())
+                        .OrderBy(
+                            app =>
+                                app.Name)
+                        .ToList();
+
+            TextBlock detectedHeader =
+                new TextBlock
+                {
+                    Text =
+                        "Detected running applications:",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            10,
+                            0,
+                            4)
+                };
+
+            appList.Children.Add(
+                detectedHeader);
+
+            foreach (
+                DetectedApplication detected
+                in uniqueApplications)
+            {
+                BlockedApp? existing =
+                    availableApps.FirstOrDefault(
+                        app =>
+                            PathsEqual(
+                                app.ExecutablePath,
+                                detected.ExecutablePath));
+
+                BlockedApp app;
+
+                if (existing != null)
+                {
+                    app = existing;
+                }
+                else
+                {
+                    app =
+                        new BlockedApp
+                        {
+                            Name =
+                                detected.Name,
+
+                            ExecutablePath =
+                                detected.ExecutablePath
+                        };
+
+                    availableApps.Add(app);
+                }
+
+                AddCheckboxIfMissing(
+                    app,
+                    appList,
+                    checkBoxes,
+                    false);
+            }
+        }
+
+        // ============================================================
+        // APP GROUP MANAGEMENT
+        // ============================================================
+
+        private async void ManageAppGroups_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "App group settings are locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before changing app groups.");
+
+                return;
+            }
+
+            while (true)
+            {
+                AppGroup? selectedGroup = null;
+
+                bool createNewGroup = false;
+
+                StackPanel content =
+                    new StackPanel
+                    {
+                        Spacing = 12
+                    };
+
+                content.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "Create groups of applications that can be assigned " +
+                            "to tasks. For example, put all games into a Games group.",
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Opacity = 0.75
+                    });
+
+                StackPanel groupList =
+                    new StackPanel
+                    {
+                        Spacing = 8
+                    };
+
+                ScrollViewer groupScroll =
+                    new ScrollViewer
+                    {
+                        Content =
+                            groupList,
+
+                        Height = 400,
+
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto
+                    };
+
+                content.Children.Add(
+                    groupScroll);
+
+                ContentDialog dialog =
+                    new ContentDialog
+                    {
+                        Title =
+                            "Manage App Groups",
+
+                        Content =
+                            content,
+
+                        CloseButtonText =
+                            "Close",
+
+                        XamlRoot =
+                            this.Content.XamlRoot
+                    };
+
+                // ----------------------------------------------------
+                // GROUP ROWS
+                // ----------------------------------------------------
+
+                foreach (AppGroup group
+                    in groupManager.Groups)
+                {
+                    Grid row =
+                        new Grid
+                        {
+                            Padding =
+                                new Thickness(8)
+                        };
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width =
+                                new GridLength(
+                                    1,
+                                    GridUnitType.Star)
+                        });
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width =
+                                GridLength.Auto
+                        });
+
+                    StackPanel info =
+                        new StackPanel
+                        {
+                            Spacing = 2
+                        };
+
+                    info.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                group.Name,
+
+                            FontSize = 16,
+
+                            FontWeight =
+                                Microsoft.UI.Text.FontWeights.SemiBold
+                        });
+
+                    info.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                $"{group.Apps.Count} application(s)" +
+                                (string.IsNullOrWhiteSpace(
+                                    group.Description)
+                                    ? ""
+                                    : $" — {group.Description}"),
+
+                            FontSize = 12,
+
+                            Opacity = 0.65,
+
+                            TextWrapping =
+                                TextWrapping.Wrap
+                        });
+
+                    Grid.SetColumn(
+                        info,
+                        0);
+
+                    Button editButton =
+                        new Button
+                        {
+                            Content =
+                                "Edit",
+
+                            Margin =
+                                new Thickness(
+                                    8,
+                                    0,
+                                    0,
+                                    0)
+                        };
+
+                    Grid.SetColumn(
+                        editButton,
+                        1);
+
+                    editButton.Click +=
+                        (s, args) =>
+                        {
+                            selectedGroup =
+                                group;
+
+                            dialog.Hide();
+                        };
+
+                    row.Children.Add(info);
+
+                    row.Children.Add(editButton);
+
+                    groupList.Children.Add(row);
+                }
+
+                if (groupManager.Groups.Count == 0)
+                {
+                    groupList.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                "No app groups exist yet.",
+
+                            Opacity = 0.65,
+
+                            Margin =
+                                new Thickness(4)
+                        });
+                }
+
+                // ----------------------------------------------------
+                // NEW GROUP
+                // ----------------------------------------------------
+
+                Button newGroupButton =
+                    new Button
+                    {
+                        Content =
+                            "+ New Group",
+
+                        HorizontalAlignment =
+                            HorizontalAlignment.Left
+                    };
+
+                newGroupButton.Click +=
+                    (s, args) =>
+                    {
+                        createNewGroup = true;
+
+                        dialog.Hide();
+                    };
+
+                content.Children.Add(
+                    newGroupButton);
+
+                await dialog.ShowAsync();
+
+                if (selectedGroup != null)
+                {
+                    await EditAppGroupAsync(
+                        selectedGroup);
+
+                    continue;
+                }
+
+                if (createNewGroup)
+                {
+                    await CreateNewGroupAsync();
+
+                    continue;
+                }
+
+                break;
+            }
+
+            RefreshTaskList();
+        }
+
+        // ============================================================
+        // CREATE GROUP
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            CreateNewGroupAsync()
+        {
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 8
+                };
+
+            TextBox nameBox =
+                new TextBox
+                {
+                    Header =
+                        "Group name",
+
+                    PlaceholderText =
+                        "Example: Games"
+                };
+
+            TextBox descriptionBox =
+                new TextBox
+                {
+                    Header =
+                        "Description",
+
+                    PlaceholderText =
+                        "Example: Games and entertainment"
+                };
+
+            content.Children.Add(
+                nameBox);
+
+            content.Children.Add(
+                descriptionBox);
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        "Create App Group",
+
+                    Content =
+                        content,
+
+                    PrimaryButtonText =
+                        "Create",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result !=
+                ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string name =
+                nameBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                await ShowSimpleMessageAsync(
+                    "The group name cannot be empty.");
+
+                return;
+            }
+
+            bool duplicate =
+                groupManager.Groups.Any(
+                    group =>
+                        group.Name.Equals(
+                            name,
+                            StringComparison.OrdinalIgnoreCase));
+
+            if (duplicate)
+            {
+                await ShowSimpleMessageAsync(
+                    "A group with that name already exists.");
+
+                return;
+            }
+
+            groupManager.CreateGroup(
+                name,
+                descriptionBox.Text.Trim());
+
+            await SaveAppGroupsAsync();
+        }
+
+        // ============================================================
+        // EDIT GROUP
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            EditAppGroupAsync(
+                AppGroup group)
+        {
+            while (true)
+            {
+                BlockedApp? appToRemove = null;
+
+                bool addApplication = false;
+
+                bool deleteGroup = false;
+
+                StackPanel content =
+                    new StackPanel
+                    {
+                        Spacing = 10
+                    };
+
+                TextBox nameBox =
+                    new TextBox
+                    {
+                        Header =
+                            "Group name",
+
+                        Text =
+                            group.Name
+                    };
+
+                TextBox descriptionBox =
+                    new TextBox
+                    {
+                        Header =
+                            "Description",
+
+                        Text =
+                            group.Description,
+
+                        AcceptsReturn = true,
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Height = 70
+                    };
+
+                content.Children.Add(
+                    nameBox);
+
+                content.Children.Add(
+                    descriptionBox);
+
+                content.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "Applications",
+
+                        FontSize = 16,
+
+                        FontWeight =
+                            Microsoft.UI.Text.FontWeights.SemiBold,
+
+                        Margin =
+                            new Thickness(
+                                0,
+                                8,
+                                0,
+                                2)
+                    });
+
+                StackPanel appList =
+                    new StackPanel
+                    {
+                        Spacing = 4
+                    };
+
+                // ----------------------------------------------------
+                // APPLICATIONS
+                // ----------------------------------------------------
+
+                foreach (BlockedApp app
+                    in group.Apps.ToList())
+                {
+                    Grid row =
+                        new Grid
+                        {
+                            Padding =
+                                new Thickness(6)
+                        };
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width =
+                                new GridLength(
+                                    1,
+                                    GridUnitType.Star)
+                        });
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width =
+                                GridLength.Auto
+                        });
+
+                    StackPanel info =
+                        new StackPanel
+                        {
+                            Spacing = 1
+                        };
+
+                    info.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                app.Name,
+
+                            FontSize = 14
+                        });
+
+                    info.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                app.ExecutablePath,
+
+                            FontSize = 11,
+
+                            Opacity = 0.55,
+
+                            TextWrapping =
+                                TextWrapping.Wrap
+                        });
+
+                    Grid.SetColumn(
+                        info,
+                        0);
+
+                    Button removeButton =
+                        new Button
+                        {
+                            Content =
+                                "Remove"
+                        };
+
+                    Grid.SetColumn(
+                        removeButton,
+                        1);
+
+                    removeButton.Click +=
+                        (s, args) =>
+                        {
+                            appToRemove = app;
+                        };
+
+                    row.Children.Add(info);
+
+                    row.Children.Add(removeButton);
+
+                    appList.Children.Add(row);
+                }
+
+                if (group.Apps.Count == 0)
+                {
+                    appList.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                "No applications in this group.",
+
+                            Opacity = 0.65,
+
+                            Margin =
+                                new Thickness(4)
+                        });
+                }
+
+                // FIX:
+                // This was accidentally written as Scontent.Children.Add(...)
+                // It must be content.Children.Add(...).
+
+                ScrollViewer groupAppsScrollViewer =
+                    new ScrollViewer
+                    {
+                        Content =
+                            appList,
+
+                        MaxHeight =
+                            300,
+
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto,
+
+                        HorizontalScrollBarVisibility =
+                            ScrollBarVisibility.Disabled
+                    };
+
+                content.Children.Add(
+                    groupAppsScrollViewer);
+
+                // ----------------------------------------------------
+                // ADD APPLICATION / BROWSE
+                // ----------------------------------------------------
+
+                StackPanel appButtons =
+                    new StackPanel
+                    {
+                        Orientation =
+                            Orientation.Horizontal,
+
+                        Spacing = 8
+                    };
+
+                Button addButton =
+                    new Button
+                    {
+                        Content =
+                            "+ Add EXE"
+                    };
+
+                Button scanButton =
+                    new Button
+                    {
+                        Content =
+                            "🔍 Scan Running Apps"
+                    };
+
+                appButtons.Children.Add(
+                    addButton);
+
+                appButtons.Children.Add(
+                    scanButton);
+
+                content.Children.Add(
+                    appButtons);
+
+                // ----------------------------------------------------
+                // DELETE GROUP
+                // ----------------------------------------------------
+
+                Button deleteButton =
+                    new Button
+                    {
+                        Content =
+                            "Delete Group",
+
+                        HorizontalAlignment =
+                            HorizontalAlignment.Left,
+
+                        Margin =
+                            new Thickness(
+                                0,
+                                8,
+                                0,
+                                0)
+                    };
+
+                content.Children.Add(
+                    deleteButton);
+
+                // ----------------------------------------------------
+                // DIALOG SCROLL VIEWER
+                // ----------------------------------------------------
+
+                ScrollViewer dialogScrollViewer =
+                    new ScrollViewer
+                    {
+                        Content =
+                            content,
+
+                        MaxHeight =
+                            600,
+
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto,
+
+                        HorizontalScrollBarVisibility =
+                            ScrollBarVisibility.Disabled
+                    };
+
+                ContentDialog dialog =
+                    new ContentDialog
+                    {
+                        Title =
+                            $"Edit Group — {group.Name}",
+
+                        Content =
+                            dialogScrollViewer,
+
+                        PrimaryButtonText =
+                            "Save",
+
+                        CloseButtonText =
+                            "Cancel",
+
+                        XamlRoot =
+                            this.Content.XamlRoot
+                    };
+
+                // ----------------------------------------------------
+                // BUTTON EVENTS
+                // ----------------------------------------------------
+
+                addButton.Click +=
+                    (s, args) =>
+                    {
+                        addApplication = true;
+
+                        dialog.Hide();
+                    };
+
+                scanButton.Click +=
+                    (s, args) =>
+                    {
+                        addApplication = false;
+
+                        dialog.Hide();
+
+                        _ = ScanRunningAppsForGroupAsync(group);
+                    };
+
+                deleteButton.Click +=
+                    (s, args) =>
+                    {
+                        deleteGroup = true;
+
+                        dialog.Hide();
+                    };
+
+                foreach (UIElement element
+                    in appList.Children)
+                {
+                    if (element is Grid row)
+                    {
+                        foreach (UIElement child
+                            in row.Children)
+                        {
+                            if (child is Button button &&
+                                button.Content?.ToString() ==
+                                "Remove")
+                            {
+                                button.Click +=
+                                    (s, args) =>
+                                    {
+                                        dialog.Hide();
+                                    };
+                            }
+                        }
+                    }
+                }
+
+                // ----------------------------------------------------
+                // SHOW
+                // ----------------------------------------------------
+
+                ContentDialogResult result =
+                    await dialog.ShowAsync();
+
+                // ----------------------------------------------------
+                // DELETE
+                // ----------------------------------------------------
+
+                if (deleteGroup)
+                {
+                    bool confirmed =
+                        await ShowConfirmationAsync(
+                            "Delete Group",
+
+                            $"Are you sure you want to delete " +
+                            $"\"{group.Name}\"?");
+
+                    if (confirmed)
+                    {
+                        groupManager.DeleteGroup(
+                            group.Id);
+
+                        await SaveAppGroupsAsync();
+
+                        return;
+                    }
+
+                    continue;
+                }
+
+                // ----------------------------------------------------
+                // ADD APPLICATION
+                // ----------------------------------------------------
+
+                if (addApplication)
+                {
+                    await AddApplicationToGroupAsync(
+                        group);
+
+                    continue;
+                }
+
+                // ----------------------------------------------------
+                // REMOVE APPLICATION
+                // ----------------------------------------------------
+
+                if (appToRemove != null)
+                {
+                    groupManager.RemoveAppFromGroup(
+                        group.Id,
+                        appToRemove.ExecutablePath);
+
+                    await SaveAppGroupsAsync();
+
+                    continue;
+                }
+
+                // ----------------------------------------------------
+                // CANCEL
+                // ----------------------------------------------------
+
+                if (result !=
+                    ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                // ----------------------------------------------------
+                // SAVE
+                // ----------------------------------------------------
+
+                string newName =
+                    nameBox.Text.Trim();
+
+                if (string.IsNullOrWhiteSpace(newName))
+                {
+                    await ShowSimpleMessageAsync(
+                        "The group name cannot be empty.");
+
+                    continue;
+                }
+
+                bool duplicate =
+                    groupManager.Groups.Any(
+                        existing =>
+                            existing != group &&
+                            existing.Name.Equals(
+                                newName,
+                                StringComparison.OrdinalIgnoreCase));
+
+                if (duplicate)
+                {
+                    await ShowSimpleMessageAsync(
+                        "Another group already has that name.");
+
+                    continue;
+                }
+
+                group.Name =
+                    newName;
+
+                group.Description =
+                    descriptionBox.Text.Trim();
+
+                await SaveAppGroupsAsync();
+
+                return;
+            }
+        }
+
+        // ============================================================
+        // ADD APPLICATION TO GROUP
+        // ============================================================
+        private async System.Threading.Tasks.Task ShowSaveLocationAsync()
+        {
+            await ShowSimpleMessageAsync(
+                $"Save directory:\n{saveDirectory}\n\n" +
+                $"Task file:\n{saveFilePath}\n\n" +
+                $"File exists:\n{File.Exists(saveFilePath)}");
+        }
+
+        private async System.Threading.Tasks.Task
+    AddApplicationToGroupAsync(
+        AppGroup group)
+        {
+            FileOpenPicker picker =
+                new FileOpenPicker
+                {
+                    ViewMode =
+                        PickerViewMode.List,
+
+                    SuggestedStartLocation =
+                        PickerLocationId.ComputerFolder
+                };
+
+            picker.FileTypeFilter.Add(".exe");
+
+            IntPtr hwnd =
+                WindowNative.GetWindowHandle(this);
+
+            InitializeWithWindow.Initialize(
+                picker,
+                hwnd);
+
+            StorageFile? file =
+                await picker.PickSingleFileAsync();
+
+            if (file == null)
+                return;
+
+            await AddExecutableToGroupAsync(
+                group,
+                file.Name,
+                file.Path);
+        }
+
+        private async System.Threading.Tasks.Task
+    AddExecutableToGroupAsync(
+        AppGroup group,
+        string name,
+        string executablePath)
+        {
+            bool alreadyExists =
+                group.Apps.Any(
+                    app =>
+                        PathsEqual(
+                            app.ExecutablePath,
+                            executablePath));
+
+            if (alreadyExists)
+            {
+                await ShowSimpleMessageAsync(
+                    "That application is already in this group.");
+
+                return;
+            }
+
+            BlockedApp? existing =
+                availableApps.FirstOrDefault(
+                    app =>
+                        PathsEqual(
+                            app.ExecutablePath,
+                            executablePath));
+
+            BlockedApp app;
+
+            if (existing != null)
+            {
+                app = existing;
+            }
+            else
+            {
+                app =
+                    new BlockedApp
+                    {
+                        Name = name,
+                        ExecutablePath = executablePath
+                    };
+
+                availableApps.Add(app);
+            }
+
+            groupManager.AddAppToGroup(
+                group.Id,
+                app);
+
+            await SaveAppGroupsAsync();
+        }
+        private async System.Threading.Tasks.Task
+
+
+    ScanRunningAppsForGroupAsync(
+        AppGroup group)
+        {
+            List<DetectedApplication>
+                detectedApplications =
+                    blockingService
+                        .GetRunningApplications();
+
+            if (detectedApplications.Count == 0)
+            {
+                await ShowSimpleMessageAsync(
+                    "No accessible running applications were detected.");
+
+                return;
+            }
+
+            List<DetectedApplication>
+                uniqueApplications =
+                    detectedApplications
+                        .GroupBy(
+                            app =>
+                                app.ExecutablePath,
+                            StringComparer.OrdinalIgnoreCase)
+                        .Select(
+                            group =>
+                                group.First())
+                        .OrderBy(
+                            app =>
+                                app.Name)
+                        .ToList();
+
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 4
+                };
+
+            foreach (
+                DetectedApplication detected
+                in uniqueApplications)
+            {
+                CheckBox checkBox =
+                    new CheckBox
+                    {
+                        Content =
+                            new StackPanel
+                            {
+                                Spacing = 1,
+                                Children =
+                                {
+                            new TextBlock
+                            {
+                                Text =
+                                    detected.Name
+                            },
+
+                            new TextBlock
+                            {
+                                Text =
+                                    detected.ExecutablePath,
+
+                                FontSize = 11,
+
+                                Opacity = 0.55,
+
+                                TextWrapping =
+                                    TextWrapping.Wrap
+                            }
+                                }
+                            }
+                    };
+
+                panel.Children.Add(checkBox);
+            }
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content = panel,
+
+                    MaxHeight = 450,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        "Scan Running Applications",
+
+                    Content =
+                        scrollViewer,
+
+                    PrimaryButtonText =
+                        "Add Selected",
+
+                    CloseButtonText =
+                        "Cancel",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result !=
+                ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            foreach (UIElement element
+                in panel.Children)
+            {
+                if (element is not CheckBox checkBox ||
+                    checkBox.IsChecked != true)
+                {
+                    continue;
+                }
+
+                int index =
+                    panel.Children.IndexOf(
+                        element);
+
+                if (index < 0 ||
+                    index >= uniqueApplications.Count)
+                {
+                    continue;
+                }
+
+                DetectedApplication detected =
+                    uniqueApplications[index];
+
+                await AddExecutableToGroupAsync(
+                    group,
+                    detected.Name,
+                    detected.ExecutablePath);
+            }
+
+            await SaveAppGroupsAsync();
+        }
+
+        // ============================================================
+        // SAVE GROUPS
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            SaveAppGroupsAsync()
+        {
+            try
+            {
+                groupManager.Save();
+
+                await System.Threading.Tasks.Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to save app groups: {ex}");
+            }
+        }
+
+
+        private async void SyncNowButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            bool success =
+                await syncManager.SyncNowAsync(
+                    tasks,
+                    groupManager,
+                    scheduleManager);
+
+            if (success)
+            {
+                await new ContentDialog
+                {
+                    Title = "Sync Complete",
+                    Content = "Your data has been synchronized.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot
+                }.ShowAsync();
+            }
+            else
+            {
+                await new ContentDialog
+                {
+                    Title = "Sync Failed",
+                    Content = "The app could not synchronize your data.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot
+                }.ShowAsync();
+            }
+        }
+
+
+        // ============================================================
+        // LOAD GROUPS
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            LoadAppGroupsAsync()
+        {
+            try
+            {
+                foreach (
+                    AppGroup group
+                    in groupManager.Groups)
+                {
+                    foreach (
+                        BlockedApp app
+                        in group.Apps)
+                    {
+                        bool exists =
+                            availableApps.Any(
+                                existing =>
+                                    PathsEqual(
+                                        existing.ExecutablePath,
+                                        app.ExecutablePath));
+
+                        if (!exists)
+                        {
+                            availableApps.Add(
+                                new BlockedApp
+                                {
+                                    Name =
+                                        app.Name,
+
+                                    ExecutablePath =
+                                        app.ExecutablePath
+                                });
+                        }
+                    }
+                }
+
+                await System.Threading.Tasks.Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to initialize app groups: {ex}");
+            }
+        }
+
+        // ============================================================
+        // PATH COMPARISON
+        // ============================================================
+
+        private bool PathsEqual(
+            string first,
+            string second)
+        {
+            if (string.IsNullOrWhiteSpace(first) ||
+                string.IsNullOrWhiteSpace(second))
+            {
+                return false;
+            }
+
+            try
+            {
+                string firstFull =
+                    Path.GetFullPath(first);
+
+                string secondFull =
+                    Path.GetFullPath(second);
+
+                return firstFull.Equals(
+                    secondFull,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return first.Equals(
+                    second,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        // ============================================================
+        // SAVE TASKS
+        // ============================================================
+
+        private async System.Threading.Tasks.Task SaveTasksAsync()
+        {
+            try
+            {
+                Directory.CreateDirectory(saveDirectory);
+
+                JsonSerializerOptions options =
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    };
+
+                string json =
+                    JsonSerializer.Serialize(
+                        tasks,
+                        options);
+
+                string tempFilePath =
+                    saveFilePath + ".tmp";
+
+                // Write the new save first.
+                await File.WriteAllTextAsync(
+                    tempFilePath,
+                    json);
+
+                // Only replace the real save after the write succeeds.
+                File.Move(
+                    tempFilePath,
+                    saveFilePath,
+                    true);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to save tasks: {ex}");
+            }
+        }
+
+        // ============================================================
+        // LOAD TASKS
+        // ============================================================
+
+        private async System.Threading.Tasks.Task LoadTasksAsync()
+        {
+            try
+            {
+                if (!File.Exists(saveFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "No task save file exists yet.");
+
+                    return;
+                }
+
+                string json =
+                    await File.ReadAllTextAsync(
+                        saveFilePath);
+
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "Task save file is empty.");
+
+                    return;
+                }
+
+                List<TodoTask>? loadedTasks =
+                    JsonSerializer.Deserialize<List<TodoTask>>(
+                        json,
+                        new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+                if (loadedTasks == null)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "Task save file could not be deserialized.");
+
+                    return;
+                }
+
+                // Only replace the current list AFTER successfully
+                // loading the save file.
+                tasks.Clear();
+
+                foreach (TodoTask task in loadedTasks)
+                {
+                    // Give older tasks an ID if they don't have one.
+                    if (string.IsNullOrWhiteSpace(task.Id))
+                    {
+                        task.Id = Guid.NewGuid().ToString();
+                    }
+
+                    // Protect against older save files that don't have
+                    // these properties.
+                    task.BlockedGroups ??=
+                        new List<string>();
+
+                    task.BlockedApps ??=
+                        new List<BlockedApp>();
+
+                    // Give older blocked apps an ID if they don't have one.
+                    foreach (BlockedApp app in task.BlockedApps)
+                    {
+                        if (string.IsNullOrWhiteSpace(app.Id))
+                        {
+                            app.Id = Guid.NewGuid().ToString();
+                        }
+                    }
+
+                    // Add individually saved apps to the available
+                    // application list.
+                    foreach (BlockedApp app in task.BlockedApps)
+                    {
+                        if (string.IsNullOrWhiteSpace(
+                            app.ExecutablePath))
+                        {
+                            continue;
+                        }
+
+                        bool exists =
+                            availableApps.Any(
+                                existing =>
+                                    PathsEqual(
+                                        existing.ExecutablePath,
+                                        app.ExecutablePath));
+
+                        if (!exists)
+                        {
+                            availableApps.Add(
+                                new BlockedApp
+                                {
+                                    Name = app.Name,
+                                    ExecutablePath =
+                                        app.ExecutablePath
+                                });
+                        }
+                    }
+
+                    // Expand groups so the blocking system knows
+                    // which actual applications belong to the task.
+                    policyManager.ExpandTaskGroups(task);
+
+                    tasks.Add(task);
+                }
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"Successfully loaded {tasks.Count} task(s).");
+
+                foreach (TodoTask task in tasks)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Loaded task: {task.Title} | " +
+                        $"Completed: {task.IsCompleted}");
+                }
+
+                // IMPORTANT:
+                //
+                // Do NOT call SaveTasksAsync() here.
+                //
+                // If the save file is damaged, we don't want to
+                // accidentally replace it with an empty task list.
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"FAILED TO LOAD TASKS: {ex}");
+
+                // IMPORTANT:
+                //
+                // Do not clear the existing list here.
+                // Do not save here.
+                //
+                // Most importantly, don't turn a loading problem
+                // into permanent data loss.
+            }
+        }
+
+        // ============================================================
+        // SIMPLE MESSAGE
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            ShowSimpleMessageAsync(
+                string message)
+        {
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        "Lochlan Productivity",
+
+                    Content =
+                        new TextBlock
+                        {
+                            Text =
+                                message,
+
+                            TextWrapping =
+                                TextWrapping.Wrap
+                        },
+
+                    CloseButtonText =
+                        "OK",
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            await dialog.ShowAsync();
+        }
+
+        // ============================================================
+        // CONFIRMATION
+        // ============================================================
+
+        private async System.Threading.Tasks.Task<bool>
+            ShowConfirmationAsync(
+                string title,
+                string message)
+        {
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title =
+                        title,
+
+                    Content =
+                        new TextBlock
+                        {
+                            Text =
+                                message,
+
+                            TextWrapping =
+                                TextWrapping.Wrap
+                        },
+
+                    PrimaryButtonText =
+                        "Yes",
+
+                    CloseButtonText =
+                        "No",
+
+                    DefaultButton =
+                        ContentDialogButton.Close,
+
+                    XamlRoot =
+                        this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            return result ==
+                ContentDialogResult.Primary;
+        }
+    }
+
+    // ================================================================
+    // DATA MODELS
+    // ================================================================
+
+
+    public class TodoTask
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string Title { get; set; } = "";
+
+        public bool IsCompleted { get; set; } = false;
+
+        public List<string> BlockedGroups { get; set; } = new();
+
+        public List<BlockedApp> BlockedApps { get; set; } = new();
+
+        // ============================================================
+        // SCHEDULING
+        // ============================================================
+
+        public bool IsRecurring { get; set; } = false;
+
+        public RecurrenceType Recurrence { get; set; } =
+            RecurrenceType.None;
+
+        // Used for "every N days"
+        public int RecurrenceInterval { get; set; } = 1;
+
+        // Used for specific days of the week
+        public List<DayOfWeek> RecurrenceDays { get; set; } = new();
+
+        // The date this task is currently due.
+        public DateTime DueDate { get; set; } =
+            DateTime.Today;
+
+        // Most recent date the task was completed.
+        public DateTime? LastCompletedDate { get; set; }
+    }
+
+    public enum RecurrenceType
+    {
+        None,
+        Daily,
+        EveryNDays,
+        WeeklyDays
+    }
+
+    public class BlockedApp
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        public string Name { get; set; } = "";
+
+        public string ExecutablePath { get; set; } = "";
+    }
+}

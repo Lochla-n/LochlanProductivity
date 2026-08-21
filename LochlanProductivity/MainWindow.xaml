@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Window
+    x:Class="LochlanProductivity.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:LochlanProductivity"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="LochlanProductivity">
+
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid Padding="32">
+
+        <Grid.RowDefinitions>
+
+            <!-- Header -->
+            <RowDefinition Height="Auto"/>
+
+            <!-- Focus mode -->
+            <RowDefinition Height="Auto"/>
+
+            <!-- Notification -->
+            <RowDefinition Height="Auto"/>
+
+            <!-- Task input -->
+            <RowDefinition Height="Auto"/>
+
+            <!-- Task list -->
+            <RowDefinition Height="*"/>
+
+        </Grid.RowDefinitions>
+
+
+        <!-- ===================================================== -->
+        <!-- HEADER -->
+        <!-- ===================================================== -->
+
+        <StackPanel Grid.Row="0">
+
+            <TextBlock
+                Text="Today's Tasks"
+                FontSize="32"
+                FontWeight="SemiBold"/>
+
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="8"
+                Margin="0,8,0,8">
+
+                <Button
+                    Content="Manage App Groups"
+                    Click="ManageAppGroups_Click"/>
+
+                <Button
+                    Content="Scheduled Blocking"
+                    Click="ManageSchedules_Click"/>
+
+                <Button Content="Scheduled Tasks"
+                     Click="ScheduledTasks_Click"
+                     Margin="8,0,0,0" />
+
+                <Button
+                    Content="Sync Now"
+                    Click="SyncNowButton_Click"
+                    HorizontalAlignment="Left"
+                    Margin="0,10,0,10"/>
+
+            </StackPanel>
+
+            <TextBlock
+                Text="Complete your tasks to unlock your blocked apps."
+                Margin="0,6,0,0"
+                Opacity="0.7"/>
+
+        </StackPanel>
+
+
+        <!-- ===================================================== -->
+        <!-- FOCUS MODE -->
+        <!-- ===================================================== -->
+
+        <Grid
+            Grid.Row="1"
+            Margin="0,20,0,0">
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel>
+
+                <TextBlock
+                    x:Name="BlockingStatusText"
+                    Text="Focus Mode is OFF"
+                    FontSize="16"
+                    FontWeight="SemiBold"/>
+
+                <TextBlock
+                    x:Name="BlockedAppStatusText"
+                    Text="No apps are currently being monitored."
+                    Margin="0,4,0,0"
+                    Opacity="0.7"/>
+
+            </StackPanel>
+
+            <Button
+                x:Name="BlockingButton"
+                Grid.Column="1"
+                Content="Start Focus Mode"
+                Click="BlockingButton_Click"
+                Padding="18,8"
+                Margin="16,0,0,0"/>
+
+        </Grid>
+
+
+        <!-- ===================================================== -->
+        <!-- BLOCKED APP NOTIFICATION -->
+        <!-- ===================================================== -->
+
+        <Border
+            x:Name="BlockedAppNotification"
+            Grid.Row="2"
+            Margin="0,16,0,0"
+            Padding="14"
+            CornerRadius="8"
+            Visibility="Collapsed">
+
+            <StackPanel>
+
+                <TextBlock
+                    x:Name="BlockedAppNotificationTitle"
+                    FontSize="16"
+                    FontWeight="SemiBold"/>
+
+                <TextBlock
+                    x:Name="BlockedAppNotificationMessage"
+                    Margin="0,4,0,0"
+                    TextWrapping="Wrap"
+                    Opacity="0.8"/>
+
+            </StackPanel>
+
+        </Border>
+
+
+        <!-- ===================================================== -->
+        <!-- TASK INPUT -->
+        <!-- ===================================================== -->
+
+        <Grid
+            Grid.Row="3"
+            Margin="0,16,0,20">
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBox
+                x:Name="TaskInput"
+                Grid.Column="0"
+                PlaceholderText="What do you need to do?"
+                KeyDown="TaskInput_KeyDown"/>
+
+            <Button
+                Grid.Column="1"
+                Content="Add Task"
+                Margin="10,0,0,0"
+                Click="AddTask_Click"/>
+
+        </Grid>
+
+
+        <!-- ===================================================== -->
+        <!-- TASK LIST -->
+        <!-- ===================================================== -->
+
+        <ScrollViewer
+            Grid.Row="4"
+            VerticalScrollBarVisibility="Auto"
+            HorizontalScrollBarVisibility="Disabled">
+
+            <StackPanel
+                x:Name="TaskList"
+                Spacing="8"/>
+
+        </ScrollViewer>
+
+    </Grid>
+
+</Window>

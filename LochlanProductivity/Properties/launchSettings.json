@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "LochlanProductivity (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "LochlanProductivity (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
