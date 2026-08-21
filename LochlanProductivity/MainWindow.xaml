@@ -10,6 +10,8 @@
     mc:Ignorable="d"
     Title="LochlanProductivity">
 
+    <!-- Git sync test -->
+
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
