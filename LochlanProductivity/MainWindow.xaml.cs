@@ -37,6 +37,13 @@ namespace LochlanProductivity
 
         private readonly StartupManager startupManager = new();
 
+        private readonly BlockedSitesManager blockedSiteStore = new();
+
+        private readonly HostsFileBlocker hostsFileBlocker = new();
+
+        // Null = unknown; forces a reconcile on the next tick.
+        private bool? websiteBlocksApplied;
+
         private TrayIconManager? trayIconManager;
 
         // ============================================================
@@ -1798,6 +1805,273 @@ namespace LochlanProductivity
             await SaveTasksAsync();
 
             UpdateBlockingStatus();
+        }
+
+        // ============================================================
+        // WEBSITE BLOCKING
+        // ============================================================
+
+        private void UpdateWebsiteBlockingState()
+        {
+            bool desired =
+                blockingService.IsBlockingActive &&
+                HasIncompleteTasks &&
+                blockedSiteStore.Domains.Count > 0;
+
+            if (websiteBlocksApplied == desired)
+                return;
+
+            websiteBlocksApplied = desired;
+
+            try
+            {
+                if (desired)
+                {
+                    hostsFileBlocker.Apply(
+                        blockedSiteStore.Domains);
+                }
+                else
+                {
+                    hostsFileBlocker.Remove();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Website blocking update failed: {ex}");
+            }
+        }
+
+        private async void BlockedSitesButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Blocked website settings are locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before changing settings.");
+
+                return;
+            }
+
+            await OpenBlockedSitesDialogAsync();
+        }
+
+        private async System.Threading.Tasks.Task
+            OpenBlockedSitesDialogAsync()
+        {
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            panel.Children.Add(
+                new TextBlock
+                {
+                    Text =
+                        "These websites are blocked system-wide " +
+                        "while Focus Mode is enforcing incomplete tasks.",
+
+                    TextWrapping = TextWrapping.Wrap,
+
+                    Opacity = 0.75
+                });
+
+            TextBox addBox =
+                new TextBox
+                {
+                    PlaceholderText =
+                        "example.com"
+                };
+
+            Button addButton =
+                new Button
+                {
+                    Content = "Add"
+                };
+
+            StackPanel siteList =
+                new StackPanel
+                {
+                    Spacing = 4
+                };
+
+            void PopulateSiteList()
+            {
+                siteList.Children.Clear();
+
+                if (blockedSiteStore.Domains.Count == 0)
+                {
+                    siteList.Children.Add(
+                        new TextBlock
+                        {
+                            Text = "No websites blocked yet.",
+
+                            Opacity = 0.6
+                        });
+
+                    return;
+                }
+
+                foreach (string domain in blockedSiteStore.Domains)
+                {
+                    Grid row =
+                        new Grid();
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width =
+                                new GridLength(
+                                    1,
+                                    GridUnitType.Star)
+                        });
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width = GridLength.Auto
+                        });
+
+                    TextBlock domainText =
+                        new TextBlock
+                        {
+                            Text = domain,
+
+                            VerticalAlignment =
+                                VerticalAlignment.Center
+                        };
+
+                    Grid.SetColumn(domainText, 0);
+
+                    Button removeButton =
+                        new Button
+                        {
+                            Content = "Remove",
+
+                            Padding =
+                                new Thickness(8, 2, 8, 2)
+                        };
+
+                    removeButton.Click +=
+                        (s, args) =>
+                        {
+                            blockedSiteStore.Remove(domain);
+
+                            websiteBlocksApplied = null;
+
+                            PopulateSiteList();
+                        };
+
+                    Grid.SetColumn(removeButton, 1);
+
+                    row.Children.Add(domainText);
+
+                    row.Children.Add(removeButton);
+
+                    siteList.Children.Add(row);
+                }
+            }
+
+            PopulateSiteList();
+
+            addButton.Click +=
+                (s, args) =>
+                {
+                    bool added =
+                        blockedSiteStore.Add(addBox.Text);
+
+                    if (added)
+                    {
+                        websiteBlocksApplied = null;
+
+                        addBox.Text = "";
+
+                        PopulateSiteList();
+                    }
+                };
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content = panel,
+
+                    MaxHeight = 500,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Blocked Websites",
+
+                    Content = scrollViewer,
+
+                    CloseButtonText = "Done",
+
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+            void AddToAddRow()
+            {
+                Grid addRow = new Grid
+                {
+                    ColumnSpacing = 8
+                };
+
+                addRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width =
+                            new GridLength(
+                                1,
+                                GridUnitType.Star)
+                    });
+
+                addRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width = GridLength.Auto
+                    });
+
+                Grid.SetColumn(addBox, 0);
+
+                Grid.SetColumn(addButton, 1);
+
+                addRow.Children.Add(addBox);
+
+                addRow.Children.Add(addButton);
+
+                panel.Children.Add(addRow);
+            }
+
+            AddToAddRow();
+
+            panel.Children.Add(siteList);
+
+            panel.Children.Add(
+                new TextBlock
+                {
+                    Text =
+                        "Changing the hosts file requires admin rights. " +
+                        "If the app is not running elevated, Windows will " +
+                        "ask for permission once per block/unblock change.",
+
+                    FontSize = 12,
+
+                    Opacity = 0.55,
+
+                    TextWrapping = TextWrapping.Wrap
+                });
+
+            await dialog.ShowAsync();
         }
 
         // ============================================================
@@ -4384,12 +4658,14 @@ namespace LochlanProductivity
                 // the whole UI state.
                 RefreshTaskList();
 
-                UpdateFocusModeLock();
+            UpdateFocusModeLock();
 
-                UpdateScheduledBlockingState();
+            UpdateScheduledBlockingState();
 
-                UpdateBlockingStatus();
-            }
+            UpdateWebsiteBlockingState();
+
+            EnforceBlocking();
+        }
 
             await ShowSimpleMessageAsync(
                 result.Success

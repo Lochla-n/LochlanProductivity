@@ -78,6 +78,11 @@
                     Click="StartupToggle_Click"
                     Margin="8,10,0,10"/>
 
+                <Button
+                    Content="Blocked Websites"
+                    Click="BlockedSitesButton_Click"
+                    Margin="8,10,0,10"/>
+
             </StackPanel>
 
             <TextBlock

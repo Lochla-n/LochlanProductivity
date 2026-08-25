@@ -25,6 +25,32 @@ namespace LochlanProductivity
         protected override void OnLaunched(
             LaunchActivatedEventArgs args)
         {
+            // Elevated hosts-file helper mode: swap the staged file
+            // into place and exit. Runs before the single-instance
+            // mutex so it works while the main instance is alive.
+            string[] cliArguments =
+                Environment.GetCommandLineArgs();
+
+            for (int i = 0; i < cliArguments.Length - 1; i++)
+            {
+                if (cliArguments[i].Equals(
+                    "--lp-hostsfile",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Services.HostsFileBlocker.PerformStagedSwap(
+                            cliArguments[i + 1]);
+                    }
+                    catch
+                    {
+                    }
+
+                    this.Exit();
+                    return;
+                }
+            }
+
             singleInstanceMutex =
                 new Mutex(
                     true,

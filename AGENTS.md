@@ -17,6 +17,7 @@ WinUI 3 / Windows App SDK desktop productivity app (`net8.0-windows10.0.19041.0`
   - `TaskRecurrenceManager.cs` - recurrence (Daily/EveryNDays/WeeklyDays); `CalculateNextDueDate` fast-forwards missed cycles; `CompleteTask` advances recurring tasks
   - `SyncManager.cs` / `SyncData.cs` - two-way merge sync keyed on Id + LastModified for Syncthing-style folder sync; folder configurable via `%LocalAppData%/LochlanProductivity/sync-config.json`, auto-detects `~/Syncthing/LochlanProductivity` then legacy OneDrive path; atomic `.tmp`+Move writes
   - `StartupManager.cs` - start-with-Windows: packaged StartupTask API (`LochlanProductivityStartup` TaskId) with HKCU Run-key fallback when unpackaged
+  - `WebsiteBlocker.cs` - `HostsFileBlocker` splices a marked section into the hosts file (domains -> 0.0.0.0); direct write, else stages content and relaunches self elevated with `--lp-hostsfile <path>` (handled in `App.OnLaunched` BEFORE the single-instance mutex). `BlockedSitesManager` persists domains to `%LocalAppData%/LochlanProductivity/blocked-sites.json`. Applied/removed only on enforcement-state transitions in `UpdateWebsiteBlockingState`; stale sections self-heal on launch
 - `LochlanProductivity/Assets/` - App icons/splash
 
 ## Build & Run

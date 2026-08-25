@@ -1,0 +1,459 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+
+namespace LochlanProductivity.Services
+{
+    // ============================================================
+    // WEBSITE BLOCKING
+    //
+    // Blocks distracting websites system-wide while enforcement is
+    // active by splicing a marked section into the Windows hosts
+    // file (domains -> 0.0.0.0).
+    //
+    // Writing %SystemRoot%\System32\drivers\etc\hosts requires
+    // admin rights. Strategy:
+    //   1. Try the direct write (works when the app runs elevated).
+    //   2. Otherwise stage the full new content and relaunch this
+    //      exe elevated ("runas") with --lp-hostsfile <staged>;
+    //      that instance performs the swap and exits (one UAC hit).
+    //
+    // Blocks are applied/removed only on enforcement-state
+    // transitions, so elevation prompts stay rare.
+    // ============================================================
+
+    public class HostsFileBlocker
+    {
+        public static readonly string HostsPath =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.System),
+                "drivers",
+                "etc",
+                "hosts");
+
+        public const string BeginMarker =
+            "# >>> LochlanProductivity Block >>>";
+
+        public const string EndMarker =
+            "# <<< LochlanProductivity Block <<<";
+
+        private readonly string stagingDirectory =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity");
+
+        // ============================================================
+        // PUBLIC API
+        // ============================================================
+
+        public bool HasBlockSection()
+        {
+            try
+            {
+                return File.Exists(HostsPath) &&
+                    File.ReadAllText(HostsPath)
+                        .Contains(BeginMarker, StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public void Apply(IEnumerable<string> domains)
+        {
+            List<string> lines =
+                new()
+                {
+                    BeginMarker
+                };
+
+            foreach (string domain in NormalizeDomains(domains))
+            {
+                lines.Add($"0.0.0.0 {domain}");
+                lines.Add($"0.0.0.0 www.{domain}");
+            }
+
+            lines.Add(EndMarker);
+
+            WriteSection(lines);
+        }
+
+        public void Remove()
+        {
+            WriteSection(new List<string>());
+        }
+
+        // ============================================================
+        // SECTION SPLICING
+        // ============================================================
+
+        private void WriteSection(List<string> sectionLines)
+        {
+            string[] existing =
+                File.Exists(HostsPath)
+                    ? File.ReadAllLines(HostsPath)
+                    : Array.Empty<string>();
+
+            List<string> output = new();
+
+            bool insideSection = false;
+
+            foreach (string line in existing)
+            {
+                string trimmed = line.Trim();
+
+                if (trimmed.Equals(BeginMarker, StringComparison.Ordinal))
+                {
+                    insideSection = true;
+                    continue;
+                }
+
+                if (trimmed.Equals(EndMarker, StringComparison.Ordinal))
+                {
+                    insideSection = false;
+                    continue;
+                }
+
+                if (!insideSection)
+                {
+                    output.Add(line);
+                }
+            }
+
+            while (output.Count > 0 &&
+                   output[^1].Trim().Length == 0)
+            {
+                output.RemoveAt(output.Count - 1);
+            }
+
+            if (sectionLines.Count > 0)
+            {
+                if (output.Count > 0)
+                {
+                    output.Add("");
+                }
+
+                output.AddRange(sectionLines);
+            }
+
+            SwapHosts(output);
+        }
+
+        // ============================================================
+        // SWAP (direct, then elevated fallback)
+        // ============================================================
+
+        private void SwapHosts(List<string> lines)
+        {
+            Directory.CreateDirectory(stagingDirectory);
+
+            string stagingPath =
+                Path.Combine(stagingDirectory, "hosts-staging.txt");
+
+            File.WriteAllLines(
+                stagingPath,
+                lines,
+                new UTF8Encoding(false));
+
+            try
+            {
+                File.Copy(stagingPath, HostsPath, true);
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+
+            RunElevatedSwap(stagingPath);
+        }
+
+        private void RunElevatedSwap(string stagingPath)
+        {
+            string? executablePath = Environment.ProcessPath;
+
+            if (string.IsNullOrWhiteSpace(executablePath))
+            {
+                throw new InvalidOperationException(
+                    "Could not determine the executable path for elevation.");
+            }
+
+            ProcessStartInfo startInfo =
+                new ProcessStartInfo(executablePath)
+                {
+                    Verb = "runas",
+
+                    UseShellExecute = true,
+
+                    Arguments =
+                        $"--lp-hostsfile \"{stagingPath}\""
+                };
+
+            Process.Start(startInfo);
+        }
+
+        // ============================================================
+        // ELEVATED HELPER ENTRY POINT
+        //
+        // App.OnLaunched routes --lp-hostsfile here before anything
+        // else (before the single-instance mutex, so the helper can
+        // run while the main instance holds it).
+        // ============================================================
+
+        public static void PerformStagedSwap(string stagingPath)
+        {
+            if (string.IsNullOrWhiteSpace(stagingPath) ||
+                !File.Exists(stagingPath))
+            {
+                return;
+            }
+
+            // Sanity check: never clobber hosts with foreign data.
+            string stagedContent =
+                File.ReadAllText(stagingPath);
+
+            if (!stagedContent.Contains(BeginMarker, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            File.Copy(stagingPath, HostsPath, true);
+
+            try
+            {
+                File.Delete(stagingPath);
+            }
+            catch
+            {
+            }
+        }
+
+        // ============================================================
+        // DOMAIN NORMALIZATION
+        // ============================================================
+
+        public static string? NormalizeDomain(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return null;
+
+            string domain = input.Trim().ToLowerInvariant();
+
+            foreach (string prefix in new[] { "https://", "http://" })
+            {
+                if (domain.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    domain = domain[prefix.Length..];
+                }
+            }
+
+            int slashIndex = domain.IndexOfAny(new[] { '/', '\\', '?' });
+
+            if (slashIndex >= 0)
+            {
+                domain = domain[..slashIndex];
+            }
+
+            if (domain.StartsWith("www.", StringComparison.Ordinal))
+            {
+                domain = domain[4..];
+            }
+
+            domain = domain.Trim('.');
+
+            if (domain.Length == 0)
+                return null;
+
+            foreach (char character in domain)
+            {
+                bool valid =
+                    char.IsLetterOrDigit(character) ||
+                    character == '.' ||
+                    character == '-';
+
+                if (!valid)
+                    return null;
+            }
+
+            return domain;
+        }
+
+        private static List<string> NormalizeDomains(
+            IEnumerable<string> domains)
+        {
+            HashSet<string> unique = new(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string domain in domains)
+            {
+                string? normalized = NormalizeDomain(domain);
+
+                if (normalized != null)
+                {
+                    unique.Add(normalized);
+                }
+            }
+
+            return unique.OrderBy(d => d, StringComparer.Ordinal).ToList();
+        }
+    }
+
+    // ============================================================
+    // BLOCKED SITES STORE (atomic JSON, DailyPrompt pattern)
+    // ============================================================
+
+    public class BlockedSitesManager
+    {
+        private readonly string saveFilePath =
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity",
+                "blocked-sites.json");
+
+        private readonly HostsFileBlocker hostsFileBlocker = new();
+
+        public List<string> Domains { get; } = new();
+
+        public BlockedSitesManager()
+        {
+            Load();
+        }
+
+        public bool Add(string domain)
+        {
+            string? normalized =
+                HostsFileBlocker.NormalizeDomain(domain);
+
+            if (normalized == null)
+                return false;
+
+            if (Domains.Any(
+                existing =>
+                    existing.Equals(
+                        normalized,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            Domains.Add(normalized);
+
+            Domains.Sort(StringComparer.Ordinal);
+
+            Save();
+
+            return true;
+        }
+
+        public bool Remove(string domain)
+        {
+            string? match =
+                Domains.FirstOrDefault(
+                    existing =>
+                        existing.Equals(
+                            domain,
+                            StringComparison.OrdinalIgnoreCase));
+
+            if (match == null)
+                return false;
+
+            Domains.Remove(match);
+
+            Save();
+
+            return true;
+        }
+
+        private void Load()
+        {
+            try
+            {
+                if (!File.Exists(saveFilePath))
+                    return;
+
+                string json =
+                    File.ReadAllText(saveFilePath);
+
+                BlockedSitesData? loaded =
+                    JsonSerializer.Deserialize<BlockedSitesData>(
+                        json,
+                        new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+                if (loaded?.Domains == null)
+                    return;
+
+                foreach (string domain in loaded.Domains)
+                {
+                    string? normalized =
+                        HostsFileBlocker.NormalizeDomain(domain);
+
+                    if (normalized != null &&
+                        !Domains.Contains(
+                            normalized,
+                            StringComparer.OrdinalIgnoreCase))
+                    {
+                        Domains.Add(normalized);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to load blocked sites: {ex}");
+            }
+        }
+
+        private void Save()
+        {
+            try
+            {
+                string? directory =
+                    Path.GetDirectoryName(saveFilePath);
+
+                if (directory == null)
+                    return;
+
+                Directory.CreateDirectory(directory);
+
+                string json =
+                    JsonSerializer.Serialize(
+                        new BlockedSitesData
+                        {
+                            Domains = Domains.ToList()
+                        },
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = true
+                        });
+
+                string tempFile = saveFilePath + ".tmp";
+
+                File.WriteAllText(tempFile, json);
+
+                File.Move(tempFile, saveFilePath, true);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to save blocked sites: {ex}");
+            }
+        }
+    }
+
+    public class BlockedSitesData
+    {
+        public List<string> Domains { get; set; } = new();
+    }
+}
