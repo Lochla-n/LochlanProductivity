@@ -2650,6 +2650,11 @@ namespace LochlanProductivity
                             this.Content.XamlRoot
                     };
 
+                // Subscribe before ShowAsync so the wait below can
+                // never miss the Closed signal.
+                System.Threading.Tasks.Task schedulesDialogClosed =
+                    WaitDialogClosedAsync(dialog);
+
                 newScheduleButton.Click +=
                     (s, args) =>
                     {
@@ -2660,7 +2665,7 @@ namespace LochlanProductivity
 
                 await dialog.ShowAsync();
 
-                await WaitDialogClosedAsync(dialog);
+                await schedulesDialogClosed;
 
                 if (createNewSchedule)
                 {
@@ -3638,6 +3643,11 @@ namespace LochlanProductivity
                             this.Content.XamlRoot
                     };
 
+                // Subscribe before ShowAsync so the wait below can
+                // never miss the Closed signal.
+                System.Threading.Tasks.Task groupsDialogClosed =
+                    WaitDialogClosedAsync(dialog);
+
                 // ----------------------------------------------------
                 // GROUP ROWS
                 // ----------------------------------------------------
@@ -3784,7 +3794,7 @@ namespace LochlanProductivity
 
                 await dialog.ShowAsync();
 
-                await WaitDialogClosedAsync(dialog);
+                await groupsDialogClosed;
 
                 if (selectedGroup != null)
                 {
@@ -4213,6 +4223,11 @@ namespace LochlanProductivity
                             this.Content.XamlRoot
                     };
 
+                // Subscribe before ShowAsync so the wait below can
+                // never miss the Closed signal.
+                System.Threading.Tasks.Task editDialogClosed =
+                    WaitDialogClosedAsync(dialog);
+
                 // ----------------------------------------------------
                 // BUTTON EVENTS
                 // ----------------------------------------------------
@@ -4271,8 +4286,9 @@ namespace LochlanProductivity
                     await dialog.ShowAsync();
 
                 // The dialog is closing but not yet closed - wait so
-                // the next dialog cannot race it.
-                await WaitDialogClosedAsync(dialog);
+                // the next dialog cannot race it. The task was created
+                // before ShowAsync so Closed cannot be missed.
+                await editDialogClosed;
 
                 // ----------------------------------------------------
                 // SCAN RUNNING APPLICATIONS
