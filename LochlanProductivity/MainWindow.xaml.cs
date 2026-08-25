@@ -54,6 +54,13 @@ namespace LochlanProductivity
         // Heartbeat throttle for webblock.log tick lines.
         private int tickHeartbeatCounter;
 
+        // Set when tasks.json fails its tamper seal: the previous
+        // list is untrusted, so blocking stays engaged and the user
+        // must rebuild today's plan before freedom returns.
+        private bool taskListTampered;
+
+        private readonly TamperSeal tamperSeal = new();
+
         private TrayIconManager? trayIconManager;
 
         // ============================================================
@@ -205,7 +212,12 @@ namespace LochlanProductivity
         {
             try
             {
-                if (!syncManager.HasSyncData())
+                // Same strictness as manual Sync Now: a merge while
+                // enforcing could import a remote completion and
+                // unlock this computer.
+                if (taskListTampered ||
+                    HasIncompleteTasks ||
+                    !syncManager.HasSyncData())
                     return;
 
                 SyncResult result =
@@ -255,6 +267,7 @@ namespace LochlanProductivity
             tasks.Where(task => !task.IsDeleted);
 
         private bool HasIncompleteTasks =>
+            taskListTampered ||
             ActiveTasks.Any(task => !task.IsCompleted);
 
         private bool IsFocusModeLocked =>
@@ -304,6 +317,11 @@ namespace LochlanProductivity
             {
                 return;
             }
+
+            // Under tamper lockdown there is no trusted "today" -
+            // never prompt for a new plan until the user saves one.
+            if (taskListTampered)
+                return;
 
             // If today's prompt was already shown, don't show it again.
             if (!dailyPromptManager.ShouldShowPrompt())
@@ -2080,6 +2098,16 @@ namespace LochlanProductivity
                         "example.com"
                 };
 
+            TextBlock addFeedback =
+                new TextBlock
+                {
+                    FontSize = 12,
+
+                    Opacity = 0,
+
+                    TextWrapping = TextWrapping.Wrap
+                };
+
             Button addButton =
                 new Button
                 {
@@ -2174,17 +2202,50 @@ namespace LochlanProductivity
             addButton.Click +=
                 (s, args) =>
                 {
-                    bool added =
-                        blockedSiteStore.Add(addBox.Text);
+                    string? normalized =
+                        HostsFileBlocker.NormalizeDomain(addBox.Text);
 
-                    if (added)
+                    if (normalized == null)
                     {
-                        websiteBlocksApplied = null;
+                        addFeedback.Text =
+                            "That doesn't look like a domain - " +
+                            "try something like example.com";
 
-                        addBox.Text = "";
+                        addFeedback.Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.Colors.OrangeRed);
 
-                        PopulateSiteList();
+                        addFeedback.Opacity = 1;
+
+                        return;
                     }
+
+                    bool added =
+                        blockedSiteStore.Add(normalized);
+
+                    if (!added)
+                    {
+                        addFeedback.Text =
+                            $"{normalized} is already on the list.";
+
+                        addFeedback.Opacity = 0.7;
+
+                        return;
+                    }
+
+                    websiteBlocksApplied = null;
+
+                    addBox.Text = "";
+
+                    addFeedback.Text = $"Added {normalized}.";
+
+                    addFeedback.Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.Colors.Green);
+
+                    addFeedback.Opacity = 0.9;
+
+                    PopulateSiteList();
                 };
 
             ScrollViewer scrollViewer =
@@ -2244,6 +2305,8 @@ namespace LochlanProductivity
                 addRow.Children.Add(addButton);
 
                 panel.Children.Add(addRow);
+
+                panel.Children.Add(addFeedback);
             }
 
             AddToAddRow();
@@ -4887,6 +4950,18 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
+            // Consistent with every other setting: no sync while
+            // focus is enforcing. Otherwise a completion pushed from
+            // the other computer could unlock this one.
+            if (HasIncompleteTasks || taskListTampered)
+            {
+                await ShowSimpleMessageAsync(
+                    "Sync is locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before syncing.");
+
+                return;
+            }
+
             SyncResult result =
                 await syncManager.SyncNowAsync(
                     tasks,
@@ -5039,6 +5114,16 @@ namespace LochlanProductivity
                     tempFilePath,
                     saveFilePath,
                     true);
+
+                // Seal the exact bytes we just wrote so hand edits
+                // are detected on the next load.
+                string sealPath = saveFilePath + ".seal";
+
+                await File.WriteAllTextAsync(
+                    sealPath,
+                    tamperSeal.Compute(json));
+
+                taskListTampered = false;
             }
             catch (Exception ex)
             {
@@ -5071,6 +5156,36 @@ namespace LochlanProductivity
                 {
                     System.Diagnostics.Debug.WriteLine(
                         "Task save file is empty.");
+
+                    return;
+                }
+
+                // ----------------------------------------------------
+                // TAMPER CHECK
+                //
+                // Missing seal = trust on first use (upgrade path).
+                // Present-but-mismatched seal = the file was edited
+                // outside the app: refuse the list and lock down.
+                // ----------------------------------------------------
+
+                string? storedSeal = null;
+
+                string sealPath = saveFilePath + ".seal";
+
+                if (File.Exists(sealPath))
+                {
+                    storedSeal =
+                        await File.ReadAllTextAsync(sealPath);
+                }
+
+                if (!tamperSeal.Verify(json, storedSeal))
+                {
+                    taskListTampered = true;
+
+                    HostsFileBlocker.Log(
+                        "TAMPER: tasks.json failed its seal - " +
+                        "list rejected, blocking locked until a " +
+                        "fresh plan is saved");
 
                     return;
                 }
