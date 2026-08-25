@@ -86,7 +86,52 @@ namespace LochlanProductivity.Services
             }
         }
 
-        public void Apply(IEnumerable<string> domains)
+        // True when the hosts file contains at least one actual
+        // block entry inside our section (bare markers don't count -
+        // they remain behind after an unblock).
+        public bool HasActiveBlockEntries()
+        {
+            try
+            {
+                if (!File.Exists(HostsPath))
+                    return false;
+
+                string[] lines =
+                    File.ReadAllLines(HostsPath);
+
+                bool inside = false;
+
+                foreach (string line in lines)
+                {
+                    string trimmed = line.Trim();
+
+                    if (trimmed.Equals(BeginMarker, StringComparison.Ordinal))
+                    {
+                        inside = true;
+                        continue;
+                    }
+
+                    if (trimmed.Equals(EndMarker, StringComparison.Ordinal))
+                    {
+                        inside = false;
+                        continue;
+                    }
+
+                    if (inside && trimmed.Length > 0)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public bool Apply(IEnumerable<string> domains)
         {
             List<string> lines =
                 new()
@@ -102,88 +147,97 @@ namespace LochlanProductivity.Services
 
             lines.Add(EndMarker);
 
-            WriteSection(lines);
+            return WriteSection(lines);
         }
 
-        public void Remove()
+        public bool Remove()
         {
-            WriteSection(new List<string>());
+            return WriteSection(new List<string>());
         }
 
         // ============================================================
         // SECTION SPLICING
         // ============================================================
 
-        private void WriteSection(List<string> sectionLines)
+        private bool WriteSection(List<string> sectionLines)
         {
-            string[] existing =
-                File.Exists(HostsPath)
-                    ? File.ReadAllLines(HostsPath)
-                    : Array.Empty<string>();
-
-            List<string> output = new();
-
-            bool insideSection = false;
-
-            foreach (string line in existing)
+            try
             {
-                string trimmed = line.Trim();
+                string[] existing =
+                    File.Exists(HostsPath)
+                        ? File.ReadAllLines(HostsPath)
+                        : Array.Empty<string>();
 
-                if (trimmed.Equals(BeginMarker, StringComparison.Ordinal))
+                List<string> output = new();
+
+                bool insideSection = false;
+
+                foreach (string line in existing)
                 {
-                    insideSection = true;
-                    continue;
+                    string trimmed = line.Trim();
+
+                    if (trimmed.Equals(BeginMarker, StringComparison.Ordinal))
+                    {
+                        insideSection = true;
+                        continue;
+                    }
+
+                    if (trimmed.Equals(EndMarker, StringComparison.Ordinal))
+                    {
+                        insideSection = false;
+                        continue;
+                    }
+
+                    if (!insideSection)
+                    {
+                        output.Add(line);
+                    }
                 }
 
-                if (trimmed.Equals(EndMarker, StringComparison.Ordinal))
+                while (output.Count > 0 &&
+                       output[^1].Trim().Length == 0)
                 {
-                    insideSection = false;
-                    continue;
+                    output.RemoveAt(output.Count - 1);
                 }
 
-                if (!insideSection)
+                if (sectionLines.Count > 0)
                 {
-                    output.Add(line);
+                    if (output.Count > 0)
+                    {
+                        output.Add("");
+                    }
+
+                    output.AddRange(sectionLines);
                 }
+                else
+                {
+                    // Unblock: keep an EMPTY marked section so the staged
+                    // file still passes the helper's sanity check and the
+                    // hosts file stays recognizably ours.
+                    if (output.Count > 0)
+                    {
+                        output.Add("");
+                    }
+
+                    output.Add(BeginMarker);
+                    output.Add(EndMarker);
+                }
+
+                return SwapHosts(output);
             }
-
-            while (output.Count > 0 &&
-                   output[^1].Trim().Length == 0)
+            catch (Exception ex)
             {
-                output.RemoveAt(output.Count - 1);
+                Log($"WriteSection failed: {ex.Message}");
+
+                return false;
             }
-
-            if (sectionLines.Count > 0)
-            {
-                if (output.Count > 0)
-                {
-                    output.Add("");
-                }
-
-                output.AddRange(sectionLines);
-            }
-            else
-            {
-                // Unblock: keep an EMPTY marked section so the staged
-                // file still passes the helper's sanity check and the
-                // hosts file stays recognizably ours.
-                if (output.Count > 0)
-                {
-                    output.Add("");
-                }
-
-                output.Add(BeginMarker);
-                output.Add(EndMarker);
-            }
-
-            SwapHosts(output);
         }
 
         // ============================================================
-        // SWAP (direct, then elevated fallback)
+        // SWAP (direct, then pre-approved task, then legacy fallback)
         // ============================================================
 
-        private void SwapHosts(List<string> lines)
+        private bool SwapHosts(List<string> lines)
         {
             Directory.CreateDirectory(stagingDirectory);
 
@@ -203,7 +257,7 @@ namespace LochlanProductivity.Services
 
                 Log("direct write succeeded");
 
-                return;
+                return true;
             }
             catch (UnauthorizedAccessException)
             {
@@ -223,13 +277,16 @@ namespace LochlanProductivity.Services
                 if (WaitForSwap(expectBlock))
                 {
                     Log("task swap verified");
-                    return;
+                    return true;
                 }
 
                 Log("task ran but swap not confirmed; falling back");
             }
 
             RunElevatedSwap(stagingPath);
+
+            // Fire-and-forget: assume the elevated helper wins.
+            return true;
         }
 
         private void RunElevatedSwap(string stagingPath)

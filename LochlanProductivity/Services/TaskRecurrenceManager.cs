@@ -63,21 +63,33 @@ namespace LochlanProductivity.Services
         public void UpdateRecurringTasks(
             IEnumerable<TodoTask> tasks)
         {
+            UpdateRecurringTasksIfDue(tasks);
+        }
+
+        // Returns true when at least one task flipped back to
+        // active (its due date arrived).
+        public bool UpdateRecurringTasksIfDue(
+            IEnumerable<TodoTask> tasks)
+        {
+            bool changed = false;
+
             foreach (TodoTask task in tasks)
             {
                 if (!task.IsRecurring)
                     continue;
 
-                // If the task was completed previously and
-                // its next due date has arrived, make it active again.
                 if (task.IsCompleted &&
                     task.DueDate.Date <= DateTime.Today)
                 {
                     task.IsCompleted = false;
 
                     task.LastModified = DateTime.UtcNow;
+
+                    changed = true;
                 }
             }
+
+            return changed;
         }
 
         // ============================================================

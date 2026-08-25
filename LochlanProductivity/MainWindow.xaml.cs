@@ -44,6 +44,11 @@ namespace LochlanProductivity
         // Null = unknown; forces a reconcile on the next tick.
         private bool? websiteBlocksApplied;
 
+        // Every ~60 ticks the actual hosts file is compared against
+        // the tracked state, healing any drift (manual edits, failed
+        // swaps, helper hiccups).
+        private int websiteHealthTickCounter;
+
         private TrayIconManager? trayIconManager;
 
         // ============================================================
@@ -167,6 +172,20 @@ namespace LochlanProductivity
             await CheckDailyPromptAsync();
 
             await UpdateStartupToggleButtonAsync();
+        }
+
+        private async System.Threading.Tasks.Task
+            PersistRecurrenceReactivationsAsync()
+        {
+            try
+            {
+                await SaveTasksAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to persist reactivated tasks: {ex}");
+            }
         }
 
         // ============================================================
@@ -410,6 +429,8 @@ namespace LochlanProductivity
             await SaveTasksAsync();
 
             RefreshTaskList();
+
+            UpdateWebsiteBlockingState();
         }
 
         // ============================================================
@@ -886,6 +907,8 @@ namespace LochlanProductivity
             await SaveTasksAsync();
 
             RefreshTaskList();
+
+            UpdateWebsiteBlockingState();
         }
 
         private async void BlockingButton_Click(
@@ -977,6 +1000,18 @@ namespace LochlanProductivity
                 !blockingService.IsMonitoring)
             {
                 blockingService.StartMonitoring();
+            }
+
+            // Reactivate recurring tasks whose next due date arrived
+            // (e.g. the app running past midnight). Doing this here
+            // means finishing everything at 11 PM re-arms blocking at
+            // 12:01 AM without an app restart.
+            if (taskRecurrenceManager.UpdateRecurringTasksIfDue(
+                ActiveTasks))
+            {
+                RefreshTaskList();
+
+                _ = PersistRecurrenceReactivationsAsync();
             }
 
             UpdateFocusModeLock();
@@ -1220,6 +1255,9 @@ namespace LochlanProductivity
             RefreshTaskList();
 
             await SaveTasksAsync();
+
+            // A new incomplete task arms blocking immediately.
+            UpdateWebsiteBlockingState();
         }
 
         // ============================================================
@@ -1832,6 +1870,29 @@ namespace LochlanProductivity
 
         private void UpdateWebsiteBlockingState()
         {
+            // ----------------------------------------------------
+            // PERIODIC SELF-HEAL
+            //
+            // Compare reality (hosts file) against our tracked state
+            // and force a reconcile if they disagree.
+            // ----------------------------------------------------
+
+            if (++websiteHealthTickCounter >= 60)
+            {
+                websiteHealthTickCounter = 0;
+
+                if (websiteBlocksApplied.HasValue &&
+                    hostsFileBlocker.HasActiveBlockEntries() !=
+                        websiteBlocksApplied.Value)
+                {
+                    HostsFileBlocker.Log(
+                        "drift detected between hosts file and tracked " +
+                        "state - forcing reconcile");
+
+                    websiteBlocksApplied = null;
+                }
+            }
+
             bool desired =
                 blockingService.IsBlockingActive &&
                 HasIncompleteTasks &&
@@ -1850,20 +1911,31 @@ namespace LochlanProductivity
 
             try
             {
-                if (desired)
+                bool success =
+                    desired
+                        ? hostsFileBlocker.Apply(
+                            blockedSiteStore.Domains)
+                        : hostsFileBlocker.Remove();
+
+                if (!success)
                 {
-                    hostsFileBlocker.Apply(
-                        blockedSiteStore.Domains);
-                }
-                else
-                {
-                    hostsFileBlocker.Remove();
+                    // Swap not confirmed - clear the flag so the next
+                    // tick retries instead of trusting a stale state.
+                    websiteBlocksApplied = null;
+
+                    HostsFileBlocker.Log(
+                        "swap unconfirmed - will retry");
                 }
             }
             catch (Exception ex)
             {
+                websiteBlocksApplied = null;
+
                 System.Diagnostics.Debug.WriteLine(
                     $"Website blocking update failed: {ex}");
+
+                HostsFileBlocker.Log(
+                    $"update threw: {ex.Message}");
             }
         }
 
