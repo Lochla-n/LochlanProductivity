@@ -2660,6 +2660,8 @@ namespace LochlanProductivity
 
                 await dialog.ShowAsync();
 
+                await WaitDialogClosedAsync(dialog);
+
                 if (createNewSchedule)
                 {
                     await CreateScheduleAsync();
@@ -3782,6 +3784,8 @@ namespace LochlanProductivity
 
                 await dialog.ShowAsync();
 
+                await WaitDialogClosedAsync(dialog);
+
                 if (selectedGroup != null)
                 {
                     await EditAppGroupAsync(
@@ -3916,6 +3920,8 @@ namespace LochlanProductivity
                 BlockedApp? appToRemove = null;
 
                 bool addApplication = false;
+
+                bool scanRequested = false;
 
                 bool deleteGroup = false;
 
@@ -4220,13 +4226,11 @@ namespace LochlanProductivity
                     };
 
                 scanButton.Click +=
-                    async (s, args) =>
+                    (s, args) =>
                     {
-                        addApplication = false;
+                        scanRequested = true;
 
-                        await HideDialogAndWaitClosedAsync(dialog);
-
-                        await ScanRunningAppsForGroupAsync(group);
+                        dialog.Hide();
                     };
 
                 deleteButton.Click +=
@@ -4265,6 +4269,21 @@ namespace LochlanProductivity
 
                 ContentDialogResult result =
                     await dialog.ShowAsync();
+
+                // The dialog is closing but not yet closed - wait so
+                // the next dialog cannot race it.
+                await WaitDialogClosedAsync(dialog);
+
+                // ----------------------------------------------------
+                // SCAN RUNNING APPLICATIONS
+                // ----------------------------------------------------
+
+                if (scanRequested)
+                {
+                    await ScanRunningAppsForGroupAsync(group);
+
+                    continue;
+                }
 
                 // ----------------------------------------------------
                 // DELETE
@@ -5100,8 +5119,8 @@ namespace LochlanProductivity
         // Hide() is asynchronous under the hood - showing another
         // dialog immediately afterwards throws and crashes the app.
         // Awaiting the Closed event removes that race.
-        private static async System.Threading.Tasks.Task
-            HideDialogAndWaitClosedAsync(ContentDialog dialog)
+        private static System.Threading.Tasks.Task
+            WaitDialogClosedAsync(ContentDialog dialog)
         {
             TaskCompletionSource completion =
                 new(
@@ -5116,16 +5135,18 @@ namespace LochlanProductivity
 
             dialog.Closed += OnClosed;
 
-            try
-            {
-                dialog.Hide();
+            return completion.Task;
+        }
 
-                await completion.Task;
-            }
-            finally
-            {
-                dialog.Closed -= OnClosed;
-            }
+        private static async System.Threading.Tasks.Task
+            HideDialogAndWaitClosedAsync(ContentDialog dialog)
+        {
+            System.Threading.Tasks.Task closed =
+                WaitDialogClosedAsync(dialog);
+
+            dialog.Hide();
+
+            await closed;
         }
 
         // ============================================================
