@@ -453,7 +453,9 @@ namespace LochlanProductivity.Services
 
         private static bool WaitForSwap(bool expectBlockSection)
         {
-            for (int attempt = 0; attempt < 25; attempt++)
+            // Kept short: this runs on the UI thread inside the
+            // timer tick. The task normally completes in <300 ms.
+            for (int attempt = 0; attempt < 15; attempt++)
             {
                 try
                 {

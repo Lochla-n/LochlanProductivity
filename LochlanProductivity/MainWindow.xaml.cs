@@ -914,6 +914,10 @@ namespace LochlanProductivity
 
                 UpdateBlockingStatus();
 
+                // Route the OFF transition through the helper task
+                // immediately instead of waiting for the next tick.
+                UpdateWebsiteBlockingState();
+
                 return;
             }
 
@@ -926,6 +930,8 @@ namespace LochlanProductivity
                 "Focus Mode is ON.";
 
             UpdateBlockingStatus();
+
+            UpdateWebsiteBlockingState();
         }
 
         private void StartBlockingTimer()
@@ -1415,6 +1421,10 @@ namespace LochlanProductivity
                         UpdateFocusModeLock();
 
                         UpdateBlockingStatus();
+
+                        // Completing the last task (or unchecking one)
+                        // flips enforcement - swap websites instantly.
+                        UpdateWebsiteBlockingState();
 
                         RefreshTaskList();
                     };
