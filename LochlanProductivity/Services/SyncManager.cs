@@ -116,7 +116,8 @@ namespace LochlanProductivity.Services
         public SyncData CreateSyncData(
             IEnumerable<LochlanProductivity.TodoTask> tasks,
             IEnumerable<AppGroup> appGroups,
-            IEnumerable<BlockingSchedule> blockingSchedules)
+            IEnumerable<BlockingSchedule> blockingSchedules,
+            IEnumerable<string> blockedSites)
         {
             return new SyncData
             {
@@ -134,7 +135,11 @@ namespace LochlanProductivity.Services
 
                 BlockingSchedules =
                     new List<BlockingSchedule>(
-                        blockingSchedules)
+                        blockingSchedules),
+
+                BlockedSites =
+                    new List<string>(
+                        blockedSites)
             };
         }
 
@@ -221,6 +226,9 @@ namespace LochlanProductivity.Services
                 data.BlockingSchedules ??=
                     new List<BlockingSchedule>();
 
+                data.BlockedSites ??=
+                    new List<string>();
+
                 return data;
             }
             catch (Exception ex)
@@ -252,13 +260,15 @@ namespace LochlanProductivity.Services
         public async Task<bool> UploadCurrentDataAsync(
             List<LochlanProductivity.TodoTask> tasks,
             AppGroupManager groupManager,
-            ScheduleManager scheduleManager)
+            ScheduleManager scheduleManager,
+            BlockedSitesManager blockedSites)
         {
             SyncData data =
                 CreateSyncData(
                     tasks,
                     groupManager.Groups,
-                    scheduleManager.Schedules);
+                    scheduleManager.Schedules,
+                    blockedSites.Domains);
 
             return await SaveSyncDataAsync(data);
         }
@@ -270,7 +280,8 @@ namespace LochlanProductivity.Services
         public async Task<SyncResult> SyncNowAsync(
             List<LochlanProductivity.TodoTask> tasks,
             AppGroupManager groupManager,
-            ScheduleManager scheduleManager)
+            ScheduleManager scheduleManager,
+            BlockedSitesManager blockedSites)
         {
             try
             {
@@ -287,7 +298,8 @@ namespace LochlanProductivity.Services
                         await UploadCurrentDataAsync(
                             tasks,
                             groupManager,
-                            scheduleManager);
+                            scheduleManager,
+                            blockedSites);
 
                     return new SyncResult
                     {
@@ -314,6 +326,11 @@ namespace LochlanProductivity.Services
                         sharedData.BlockingSchedules,
                         scheduleManager);
 
+                int siteChanges =
+                    MergeBlockedSites(
+                        sharedData.BlockedSites,
+                        blockedSites);
+
                 // ----------------------------------------------------
                 // WRITE THE MERGED SNAPSHOT BACK so the other
                 // computer picks up this side's newer items too.
@@ -323,7 +340,8 @@ namespace LochlanProductivity.Services
                     CreateSyncData(
                         tasks,
                         groupManager.Groups,
-                        scheduleManager.Schedules);
+                        scheduleManager.Schedules,
+                        blockedSites.Domains);
 
                 bool saved =
                     await SaveSyncDataAsync(merged);
@@ -338,8 +356,10 @@ namespace LochlanProductivity.Services
 
                     ScheduleChanges = scheduleChanges,
 
+                    SiteChanges = siteChanges,
+
                     Message = saved
-                        ? $"{taskChanges} task(s), {groupChanges} group(s), {scheduleChanges} schedule(s) updated."
+                        ? $"{taskChanges} task(s), {groupChanges} group(s), {scheduleChanges} schedule(s), {siteChanges} site(s) updated."
                         : $"Could not write {SyncFilePath}."
                 };
             }
@@ -535,6 +555,15 @@ namespace LochlanProductivity.Services
             return changes;
         }
 
+        private int MergeBlockedSites(
+            List<string> incoming,
+            BlockedSitesManager blockedSites)
+        {
+            // Union semantics: a site added on either computer ends
+            // up blocking on both. See SyncData.BlockedSites.
+            return blockedSites.Absorb(incoming);
+        }
+
         // ============================================================
         // CONFIG PERSISTENCE (atomic, DailyPrompt pattern)
         // ============================================================
@@ -616,5 +645,7 @@ namespace LochlanProductivity.Services
         public int GroupChanges { get; set; }
 
         public int ScheduleChanges { get; set; }
+
+        public int SiteChanges { get; set; }
     }
 }

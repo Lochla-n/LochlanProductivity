@@ -188,18 +188,27 @@ namespace LochlanProductivity
                     await syncManager.SyncNowAsync(
                         tasks,
                         groupManager,
-                        scheduleManager);
+                        scheduleManager,
+                        blockedSiteStore);
 
                 if (result.Success &&
                     (result.TaskChanges > 0 ||
                      result.GroupChanges > 0 ||
-                     result.ScheduleChanges > 0))
+                     result.ScheduleChanges > 0 ||
+                     result.SiteChanges > 0))
                 {
                     RefreshTaskList();
 
                     UpdateFocusModeLock();
 
                     UpdateScheduledBlockingState();
+
+                    if (result.SiteChanges > 0)
+                    {
+                        websiteBlocksApplied = null;
+                    }
+
+                    UpdateWebsiteBlockingState();
 
                     UpdateBlockingStatus();
 
@@ -4713,7 +4722,8 @@ namespace LochlanProductivity
                 await syncManager.SyncNowAsync(
                     tasks,
                     groupManager,
-                    scheduleManager);
+                    scheduleManager,
+                    blockedSiteStore);
 
             if (result.Success)
             {
@@ -4721,14 +4731,21 @@ namespace LochlanProductivity
                 // the whole UI state.
                 RefreshTaskList();
 
-            UpdateFocusModeLock();
+                UpdateFocusModeLock();
 
-            UpdateScheduledBlockingState();
+                UpdateScheduledBlockingState();
 
-            UpdateWebsiteBlockingState();
+                if (result.SiteChanges > 0)
+                {
+                    // New sites arrived from the other computer -
+                    // force the hosts file to pick them up.
+                    websiteBlocksApplied = null;
+                }
 
-            EnforceBlocking();
-        }
+                UpdateWebsiteBlockingState();
+
+                EnforceBlocking();
+            }
 
             await ShowSimpleMessageAsync(
                 result.Success

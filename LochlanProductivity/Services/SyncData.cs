@@ -34,5 +34,17 @@ namespace LochlanProductivity.Services
 
         public List<BlockingSchedule> BlockingSchedules { get; set; } =
             new();
+
+        // ============================================================
+        // BLOCKED WEBSITES
+        //
+        // Merged as a UNION across computers: adding a site anywhere
+        // blocks it everywhere. Deletions do NOT propagate yet (a
+        // removed site can return after the other computer syncs)
+        // - acceptable for an always-growing blocklist.
+        // ============================================================
+
+        public List<string> BlockedSites { get; set; } =
+            new();
     }
 }

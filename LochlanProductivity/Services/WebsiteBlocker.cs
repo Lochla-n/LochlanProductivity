@@ -650,6 +650,48 @@ namespace LochlanProductivity.Services
             return true;
         }
 
+        // Used by SyncManager: absorb the other computer's sites
+        // (union semantics). Returns how many were new.
+        public int Absorb(IEnumerable<string> domains)
+        {
+            int added = 0;
+
+            foreach (string domain in domains)
+            {
+                string? normalized =
+                    HostsFileBlocker.NormalizeDomain(domain);
+
+                if (normalized == null)
+                    continue;
+
+                if (Domains.Any(
+                    existing =>
+                        existing.Equals(
+                            normalized,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                Domains.Add(normalized);
+
+                added++;
+            }
+
+            if (added > 0)
+            {
+                Domains.Sort(StringComparer.Ordinal);
+
+                Save();
+            }
+
+            return added;
+        }
+
+        public bool ContainsAll(IEnumerable<string> domains) =>
+            domains.All(d =>
+                Domains.Contains(d, StringComparer.OrdinalIgnoreCase));
+
         private void Load()
         {
             try
