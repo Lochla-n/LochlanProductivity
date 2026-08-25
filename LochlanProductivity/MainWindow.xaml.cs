@@ -563,7 +563,7 @@ namespace LochlanProductivity
             newTaskButton.Click +=
                 async (s, args) =>
                 {
-                    dialog.Hide();
+                    await HideDialogAndWaitClosedAsync(dialog);
 
                     await CreateScheduledTaskAsync();
                 };
@@ -4220,13 +4220,13 @@ namespace LochlanProductivity
                     };
 
                 scanButton.Click +=
-                    (s, args) =>
+                    async (s, args) =>
                     {
                         addApplication = false;
 
-                        dialog.Hide();
+                        await HideDialogAndWaitClosedAsync(dialog);
 
-                        _ = ScanRunningAppsForGroupAsync(group);
+                        await ScanRunningAppsForGroupAsync(group);
                     };
 
                 deleteButton.Click +=
@@ -4476,6 +4476,8 @@ namespace LochlanProductivity
     ScanRunningAppsForGroupAsync(
         AppGroup group)
         {
+            try
+            {
             List<DetectedApplication>
                 detectedApplications =
                     blockingService
@@ -4497,8 +4499,8 @@ namespace LochlanProductivity
                                 app.ExecutablePath,
                             StringComparer.OrdinalIgnoreCase)
                         .Select(
-                            group =>
-                                group.First())
+                            detectedGroup =>
+                                detectedGroup.First())
                         .OrderBy(
                             app =>
                                 app.Name)
@@ -4509,6 +4511,10 @@ namespace LochlanProductivity
                 {
                     Spacing = 4
                 };
+
+            Dictionary<CheckBox, DetectedApplication>
+                checkBoxToApplication =
+                    new();
 
             foreach (
                 DetectedApplication detected
@@ -4544,6 +4550,10 @@ namespace LochlanProductivity
                                 }
                             }
                     };
+
+                    checkBoxToApplication.Add(
+                        checkBox,
+                        detected);
 
                 panel.Children.Add(checkBox);
             }
@@ -4590,35 +4600,37 @@ namespace LochlanProductivity
                 return;
             }
 
-            foreach (UIElement element
-                in panel.Children)
+            foreach (
+                KeyValuePair<CheckBox, DetectedApplication> pair
+                in checkBoxToApplication)
             {
-                if (element is not CheckBox checkBox ||
-                    checkBox.IsChecked != true)
+                if (pair.Key.IsChecked != true)
                 {
                     continue;
                 }
-
-                int index =
-                    panel.Children.IndexOf(
-                        element);
-
-                if (index < 0 ||
-                    index >= uniqueApplications.Count)
-                {
-                    continue;
-                }
-
-                DetectedApplication detected =
-                    uniqueApplications[index];
 
                 await AddExecutableToGroupAsync(
                     group,
-                    detected.Name,
-                    detected.ExecutablePath);
+                    pair.Value.Name,
+                    pair.Value.ExecutablePath);
             }
 
             await SaveAppGroupsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Scanning running applications failed: {ex}");
+
+                try
+                {
+                    await ShowSimpleMessageAsync(
+                        "Could not scan running applications.\n\n" + ex.Message);
+                }
+                catch
+                {
+                }
+            }
         }
 
         // ============================================================
@@ -5077,6 +5089,42 @@ namespace LochlanProductivity
             {
                 await ShowSimpleMessageAsync(
                     "Could not change the Windows startup setting.");
+            }
+        }
+
+        // ============================================================
+        // DIALOG HELPERS
+        // ============================================================
+
+        // WinUI allows only one open ContentDialog per XamlRoot, and
+        // Hide() is asynchronous under the hood - showing another
+        // dialog immediately afterwards throws and crashes the app.
+        // Awaiting the Closed event removes that race.
+        private static async System.Threading.Tasks.Task
+            HideDialogAndWaitClosedAsync(ContentDialog dialog)
+        {
+            TaskCompletionSource completion =
+                new(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void OnClosed(
+                ContentDialog sender,
+                ContentDialogClosedEventArgs args)
+            {
+                completion.TrySetResult();
+            }
+
+            dialog.Closed += OnClosed;
+
+            try
+            {
+                dialog.Hide();
+
+                await completion.Task;
+            }
+            finally
+            {
+                dialog.Closed -= OnClosed;
             }
         }
 
