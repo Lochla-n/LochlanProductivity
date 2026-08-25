@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace LochlanProductivity.Services
 {
@@ -41,6 +42,21 @@ namespace LochlanProductivity.Services
 
         public const string EndMarker =
             "# <<< LochlanProductivity Block <<<";
+
+        // ============================================================
+        // ELEVATED HELPER TASK
+        //
+        // A scheduled task (registered once with a single UAC) that
+        // copies the staged file over the hosts file. Because the
+        // task's definition was approved by an administrator, the
+        // app can start it later with NO elevation prompt - this is
+        // what makes per-transition prompts disappear.
+        // ============================================================
+
+        private const string TaskName =
+            "LochlanProductivityHosts";
+
+        private static bool? taskRegistrationFailedThisSession;
 
         // NOTE: deliberately under the user profile, NOT
         // LocalAppData - MSIX virtualizes AppData writes into the
@@ -185,6 +201,21 @@ namespace LochlanProductivity.Services
                 Log($"direct write IO error: {ex.Message}");
             }
 
+            // Preferred transport: the pre-approved scheduled task.
+            if (EnsureHelperTaskRegistered() && RunHelperTask())
+            {
+                bool expectBlock =
+                    lines.Contains(BeginMarker);
+
+                if (WaitForSwap(expectBlock))
+                {
+                    Log("task swap verified");
+                    return;
+                }
+
+                Log("task ran but swap not confirmed; falling back");
+            }
+
             RunElevatedSwap(stagingPath);
         }
 
@@ -247,11 +278,195 @@ namespace LochlanProductivity.Services
         }
 
         // ============================================================
-        // ELEVATED HELPER ENTRY POINT
+        // HELPER TASK MANAGEMENT
+        // ============================================================
+
+        private static string HelperScript()
+        {
+            // Fixed staging path: same constant the app writes to.
+            string stagingDirectory =
+                Path.Combine(
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.UserProfile),
+                    "LochlanProductivityData");
+
+            return
+                "$ErrorActionPreference='Stop'; " +
+                "$dir='" + stagingDirectory + "'; " +
+                "$src=Join-Path $dir 'hosts-staging.txt'; " +
+                "try { " +
+                "if (-not (Test-Path $src)) { throw 'no staging file' } " +
+                "$c = Get-Content $src -Raw; " +
+                "if (-not $c.Contains('LochlanProductivity Block')) { throw 'sanity' } " +
+                "Copy-Item -LiteralPath $src -Destination \"$env:SystemRoot\\System32\\drivers\\etc\\hosts\" -Force; " +
+                "'OK' | Out-File (Join-Path $dir 'swap-last-result.txt') -Encoding ascii " +
+                "} catch { " +
+                "$_.Exception.Message | Out-File (Join-Path $dir 'swap-last-result.txt') -Encoding ascii; " +
+                "exit 1 }";
+        }
+
+        public static bool IsHelperTaskRegistered()
+        {
+            try
+            {
+                ProcessStartInfo query =
+                    new ProcessStartInfo(
+                        "schtasks",
+                        $"/Query /TN \"{TaskName}\"")
+                {
+                    UseShellExecute = false,
+
+                    CreateNoWindow = true
+                };
+
+                using Process? process =
+                    Process.Start(query);
+
+                process?.WaitForExit(5000);
+
+                return process?.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool RunHelperTask()
+        {
+            try
+            {
+                ProcessStartInfo run =
+                    new ProcessStartInfo(
+                        "schtasks",
+                        $"/Run /TN \"{TaskName}\"")
+                {
+                    UseShellExecute = false,
+
+                    CreateNoWindow = true
+                };
+
+                using Process? process =
+                    Process.Start(run);
+
+                process?.WaitForExit(5000);
+
+                bool started = process?.ExitCode == 0;
+
+                Log(started
+                    ? "helper task triggered"
+                    : $"helper task trigger failed ({process?.ExitCode})");
+
+                return started;
+            }
+            catch (Exception ex)
+            {
+                Log($"helper task trigger error: {ex.Message}");
+
+                return false;
+            }
+        }
+
+        private static bool EnsureHelperTaskRegistered()
+        {
+            if (IsHelperTaskRegistered())
+                return true;
+
+            if (taskRegistrationFailedThisSession == true)
+                return false;
+
+            try
+            {
+                string encodedScript =
+                    Convert.ToBase64String(
+                        Encoding.Unicode.GetBytes(
+                            HelperScript()));
+
+                string registerCommand =
+                    "$ErrorActionPreference='Stop'; " +
+                    "$action = New-ScheduledTaskAction " +
+                    "-Execute 'powershell.exe' " +
+                    $"-Argument '-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encodedScript}'; " +
+                    "$principal = New-ScheduledTaskPrincipal " +
+                    "-UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) " +
+                    "-LogonType Interactive -RunLevel Highest; " +
+                    "$settings = New-ScheduledTaskSettingsSet " +
+                    "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries " +
+                    "-ExecutionTimeLimit (New-TimeSpan -Minutes 5); " +
+                    "Register-ScheduledTask " +
+                    $"-TaskName '{TaskName}' " +
+                    "-Action $action -Principal $principal " +
+                    "-Settings $settings -Force | Out-Null; 'REGISTERED'";
+
+                string encodedRegister =
+                    Convert.ToBase64String(
+                        Encoding.Unicode.GetBytes(registerCommand));
+
+                using Process? process =
+                    Process.Start(
+                        new ProcessStartInfo("powershell.exe")
+                        {
+                            Arguments =
+                                $"-NoProfile -EncodedCommand {encodedRegister}",
+
+                            Verb = "runas",
+
+                            UseShellExecute = true,
+
+                            WindowStyle =
+                                ProcessWindowStyle.Hidden
+                        });
+
+                process?.WaitForExit(60000);
+            }
+            catch (Exception ex)
+            {
+                Log($"task registration declined/failed: {ex.Message}");
+            }
+
+            bool registered = IsHelperTaskRegistered();
+
+            if (!registered)
+            {
+                taskRegistrationFailedThisSession = true;
+            }
+
+            Log(registered
+                ? "helper task registered (one UAC)"
+                : "helper task NOT registered");
+
+            return registered;
+        }
+
+        private static bool WaitForSwap(bool expectBlockSection)
+        {
+            for (int attempt = 0; attempt < 25; attempt++)
+            {
+                try
+                {
+                    if (File.ReadAllText(HostsPath)
+                            .Contains(BeginMarker, StringComparison.Ordinal)
+                        == expectBlockSection)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+
+                Thread.Sleep(120);
+            }
+
+            return false;
+        }
+
+        // ============================================================
+        // ELEVATED HELPER ENTRY POINT (--lp-hostsfile legacy fallback)
         //
         // App.OnLaunched routes --lp-hostsfile here before anything
-        // else (before the single-instance mutex, so the helper can
-        // run while the main instance holds it).
+        // else (before the single-instance mutex), so this runs even
+        // while the main instance holds the mutex.
         // ============================================================
 
         public static void PerformStagedSwap(string stagingPath)
