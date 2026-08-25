@@ -162,6 +162,19 @@ namespace LochlanProductivity.Services
 
                 output.AddRange(sectionLines);
             }
+            else
+            {
+                // Unblock: keep an EMPTY marked section so the staged
+                // file still passes the helper's sanity check and the
+                // hosts file stays recognizably ours.
+                if (output.Count > 0)
+                {
+                    output.Add("");
+                }
+
+                output.Add(BeginMarker);
+                output.Add(EndMarker);
+            }
 
             SwapHosts(output);
         }
