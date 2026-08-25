@@ -162,16 +162,23 @@ namespace LochlanProductivity.Services
                 lines,
                 new UTF8Encoding(false));
 
+            Log($"staged {lines.Count} line(s); trying direct write");
+
             try
             {
                 File.Copy(stagingPath, HostsPath, true);
+
+                Log("direct write succeeded");
+
                 return;
             }
             catch (UnauthorizedAccessException)
             {
+                Log("direct write denied");
             }
-            catch (IOException)
+            catch (IOException ex)
             {
+                Log($"direct write IO error: {ex.Message}");
             }
 
             RunElevatedSwap(stagingPath);
@@ -198,7 +205,41 @@ namespace LochlanProductivity.Services
                         $"--lp-hostsfile \"{stagingPath}\""
                 };
 
-            Process.Start(startInfo);
+            try
+            {
+                Process.Start(startInfo);
+
+                Log("elevated helper launched");
+            }
+            catch (Exception ex)
+            {
+                // Typical causes: UAC declined, or a packaged app
+                // deployed without the allowElevation capability.
+                Log($"elevation failed: {ex.Message}");
+
+                throw;
+            }
+        }
+
+        public static void Log(string message)
+        {
+            try
+            {
+                string directory =
+                    Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.LocalApplicationData),
+                        "LochlanProductivity");
+
+                Directory.CreateDirectory(directory);
+
+                File.AppendAllText(
+                    Path.Combine(directory, "webblock.log"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            }
+            catch
+            {
+            }
         }
 
         // ============================================================
@@ -227,6 +268,8 @@ namespace LochlanProductivity.Services
             }
 
             File.Copy(stagingPath, HostsPath, true);
+
+            Log("elevated swap complete");
 
             try
             {

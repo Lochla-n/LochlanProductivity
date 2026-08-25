@@ -1823,6 +1823,12 @@ namespace LochlanProductivity
 
             websiteBlocksApplied = desired;
 
+            HostsFileBlocker.Log(
+                $"state -> {(desired ? "BLOCKING" : "unblocked")} " +
+                $"(enforcing={blockingService.IsBlockingActive}, " +
+                $"incompleteTasks={HasIncompleteTasks}, " +
+                $"domains={blockedSiteStore.Domains.Count})");
+
             try
             {
                 if (desired)
