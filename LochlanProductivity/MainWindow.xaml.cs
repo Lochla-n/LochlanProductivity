@@ -49,6 +49,9 @@ namespace LochlanProductivity
         // swaps, helper hiccups).
         private int websiteHealthTickCounter;
 
+        // Heartbeat throttle for webblock.log tick lines.
+        private int tickHeartbeatCounter;
+
         private TrayIconManager? trayIconManager;
 
         // ============================================================
@@ -996,31 +999,63 @@ namespace LochlanProductivity
             object? sender,
             object e)
         {
-            if (HasIncompleteTasks &&
-                !blockingService.IsMonitoring)
+            try
             {
-                blockingService.StartMonitoring();
-            }
+                // Heartbeat every 10s so a dead or stuck tick is
+                // visible in webblock.log instead of silent.
+                if (++tickHeartbeatCounter >= 10)
+                {
+                    tickHeartbeatCounter = 0;
 
-            // Reactivate recurring tasks whose next due date arrived
-            // (e.g. the app running past midnight). Doing this here
-            // means finishing everything at 11 PM re-arms blocking at
-            // 12:01 AM without an app restart.
-            if (taskRecurrenceManager.UpdateRecurringTasksIfDue(
-                ActiveTasks))
+                    HostsFileBlocker.Log(
+                        $"tick: incomplete={HasIncompleteTasks}, " +
+                        $"enforcing={blockingService.IsBlockingActive}, " +
+                        $"tasksInMemory={tasks.Count}");
+                }
+
+                if (HasIncompleteTasks &&
+                    !blockingService.IsMonitoring)
+                {
+                    blockingService.StartMonitoring();
+                }
+
+                // Reactivate recurring tasks whose next due date arrived
+                // (e.g. the app running past midnight). Doing this here
+                // means finishing everything at 11 PM re-arms blocking at
+                // 12:01 AM without an app restart.
+                if (taskRecurrenceManager.UpdateRecurringTasksIfDue(
+                    ActiveTasks))
+                {
+                    RefreshTaskList();
+
+                    _ = PersistRecurrenceReactivationsAsync();
+                }
+
+                UpdateFocusModeLock();
+
+                UpdateScheduledBlockingState();
+
+                UpdateWebsiteBlockingState();
+
+                EnforceBlocking();
+
+                UpdateBlockingStatus();
+            }
+            catch (Exception ex)
             {
-                RefreshTaskList();
+                // Never let a tick death stay silent - keep enforcing
+                // websites even if something else blew up.
+                HostsFileBlocker.Log(
+                    $"TICK EXCEPTION: {ex}");
 
-                _ = PersistRecurrenceReactivationsAsync();
+                try
+                {
+                    UpdateWebsiteBlockingState();
+                }
+                catch
+                {
+                }
             }
-
-            UpdateFocusModeLock();
-
-            UpdateScheduledBlockingState();
-
-            EnforceBlocking();
-
-            UpdateBlockingStatus();
         }
 
         private void UpdateScheduledBlockingState()
