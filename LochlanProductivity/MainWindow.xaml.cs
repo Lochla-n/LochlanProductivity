@@ -1901,6 +1901,8 @@ namespace LochlanProductivity
             if (websiteBlocksApplied == desired)
                 return;
 
+            bool wasApplied = websiteBlocksApplied == true;
+
             websiteBlocksApplied = desired;
 
             HostsFileBlocker.Log(
@@ -1925,6 +1927,18 @@ namespace LochlanProductivity
 
                     HostsFileBlocker.Log(
                         "swap unconfirmed - will retry");
+                }
+                else if (desired && !wasApplied)
+                {
+                    // Freshly engaged: kill browsers so their cached
+                    // DNS and live connections cannot bypass the wall.
+                    int killed =
+                        blockingService.KillKnownBrowsers();
+
+                    HostsFileBlocker.Log(
+                        killed > 0
+                            ? $"blocking engaged; closed {killed} browser(s)"
+                            : "blocking engaged");
                 }
             }
             catch (Exception ex)

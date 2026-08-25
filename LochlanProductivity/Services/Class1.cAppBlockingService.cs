@@ -487,6 +487,73 @@ namespace LochlanProductivity.Services
         }
 
         // ============================================================
+        // BROWSER TERMINATION
+        //
+        // Hosts-file blocking cannot touch connections a browser has
+        // already opened or the entries in its private DNS cache.
+        // Killing the known browsers when enforcement engages closes
+        // those escape hatches - a fresh launch resolves through the
+        // blocked hosts file.
+        // ============================================================
+
+        private static readonly string[] KnownBrowserProcessNames =
+        {
+            "chrome",
+            "msedge",
+            "firefox",
+            "brave",
+            "opera",
+            "vivaldi"
+        };
+
+        public int KillKnownBrowsers()
+        {
+            int killed = 0;
+
+            foreach (
+                string processName
+                in KnownBrowserProcessNames)
+            {
+                Process[] processes;
+
+                try
+                {
+                    processes =
+                        Process.GetProcessesByName(processName);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (
+                    Process process
+                    in processes)
+                {
+                    try
+                    {
+                        if (process.HasExited)
+                            continue;
+
+                        process.Kill(
+                            entireProcessTree: true);
+
+                        killed++;
+                    }
+                    catch
+                    {
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+
+            return killed;
+        }
+
+        // ============================================================
         // FIND SPECIFIC APPLICATION
         // ============================================================
 
