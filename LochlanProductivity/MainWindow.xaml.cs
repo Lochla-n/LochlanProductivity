@@ -39,6 +39,8 @@ namespace LochlanProductivity
 
         private readonly BlockedSitesManager blockedSiteStore = new();
 
+        private readonly AppSettingsManager appSettings = new();
+
         private readonly HostsFileBlocker hostsFileBlocker = new();
 
         // Null = unknown; forces a reconcile on the next tick.
@@ -1965,18 +1967,28 @@ namespace LochlanProductivity
                 }
                 else if (desired && !wasApplied)
                 {
-                    // Freshly engaged: disable browser secure-DNS
-                    // (hosts bypass) and kill browsers so cached DNS
-                    // and live connections cannot dodge the wall.
+                    // Freshly engaged: disable browser secure-DNS so
+                    // the hosts file is authoritative. Browsers are
+                    // only closed if the user opted into that.
                     hostsFileBlocker.ApplyBrowserDnsPolicies();
 
-                    int killed =
-                        blockingService.KillKnownBrowsers();
+                    if (appSettings.KillBrowsersOnEngage)
+                    {
+                        int killed =
+                            blockingService.KillKnownBrowsers();
 
-                    HostsFileBlocker.Log(
-                        killed > 0
-                            ? $"blocking engaged; policy applied, closed {killed} browser(s)"
-                            : "blocking engaged; policy applied");
+                        HostsFileBlocker.Log(
+                            killed > 0
+                                ? $"blocking engaged; policy applied, closed {killed} browser(s)"
+                                : "blocking engaged; policy applied");
+                    }
+                    else
+                    {
+                        HostsFileBlocker.Log(
+                            "blocking engaged; policy applied " +
+                            "(browsers left running - open tabs may " +
+                            "linger up to ~1 min)");
+                    }
                 }
                 else if (!desired)
                 {
@@ -2031,6 +2043,35 @@ namespace LochlanProductivity
 
                     Opacity = 0.75
                 });
+
+            CheckBox killBrowsersBox =
+                new CheckBox
+                {
+                    Content =
+                        "Also close browsers when blocking starts " +
+                        "(off = open tabs linger up to ~1 minute)",
+
+                    IsChecked =
+                        appSettings.KillBrowsersOnEngage
+                };
+
+            killBrowsersBox.Checked +=
+                (s, args) =>
+                {
+                    appSettings.KillBrowsersOnEngage = true;
+
+                    appSettings.Save();
+                };
+
+            killBrowsersBox.Unchecked +=
+                (s, args) =>
+                {
+                    appSettings.KillBrowsersOnEngage = false;
+
+                    appSettings.Save();
+                };
+
+            panel.Children.Add(killBrowsersBox);
 
             TextBox addBox =
                 new TextBox
