@@ -42,11 +42,15 @@ namespace LochlanProductivity.Services
         public const string EndMarker =
             "# <<< LochlanProductivity Block <<<";
 
+        // NOTE: deliberately under the user profile, NOT
+        // LocalAppData - MSIX virtualizes AppData writes into the
+        // package sandbox, which would hide the staged file from
+        // the elevated helper (it runs outside the sandbox).
         private readonly string stagingDirectory =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.LocalApplicationData),
-                "LochlanProductivity");
+                    Environment.SpecialFolder.UserProfile),
+                "LochlanProductivityData");
 
         // ============================================================
         // PUBLIC API
