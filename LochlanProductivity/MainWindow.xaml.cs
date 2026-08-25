@@ -1930,15 +1930,22 @@ namespace LochlanProductivity
                 }
                 else if (desired && !wasApplied)
                 {
-                    // Freshly engaged: kill browsers so their cached
-                    // DNS and live connections cannot bypass the wall.
+                    // Freshly engaged: disable browser secure-DNS
+                    // (hosts bypass) and kill browsers so cached DNS
+                    // and live connections cannot dodge the wall.
+                    hostsFileBlocker.ApplyBrowserDnsPolicies();
+
                     int killed =
                         blockingService.KillKnownBrowsers();
 
                     HostsFileBlocker.Log(
                         killed > 0
-                            ? $"blocking engaged; closed {killed} browser(s)"
-                            : "blocking engaged");
+                            ? $"blocking engaged; policy applied, closed {killed} browser(s)"
+                            : "blocking engaged; policy applied");
+                }
+                else if (!desired)
+                {
+                    hostsFileBlocker.RemoveBrowserDnsPolicies();
                 }
             }
             catch (Exception ex)

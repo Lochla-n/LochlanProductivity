@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Microsoft.Win32;
 
 namespace LochlanProductivity.Services
 {
@@ -153,6 +154,124 @@ namespace LochlanProductivity.Services
         public bool Remove()
         {
             return WriteSection(new List<string>());
+        }
+
+        // ============================================================
+        // BROWSER DNS POLICY (anti DoH bypass)
+        //
+        // Chromium browsers ignore the hosts file when their builtin
+        // DNS-over-HTTPS client is enabled. Group-policy keys under
+        // HKCU force it off WITHOUT admin rights, making hosts-based
+        // blocking authoritative.
+        // ============================================================
+
+        private static readonly string[] ChromiumPolicyKeys =
+        {
+            @"Software\Policies\Google\Chrome",
+            @"Software\Policies\Microsoft\Edge",
+            @"Software\Policies\BraveSoftware\Brave",
+            @"Software\Policies\Vivaldi",
+            @"Software\Policies\Opera"
+        };
+
+        private const string DnsPolicyValueName =
+            "BuiltInDnsClientEnabled";
+
+        public void ApplyBrowserDnsPolicies()
+        {
+            // Direct attempt first (only works elevated).
+            bool directOk = WriteDnsPolicyRegistry("APPLY");
+
+            // Otherwise stage for the elevated helper task.
+            if (!directOk)
+            {
+                StageDnsPolicy("APPLY");
+
+                if (EnsureHelperTaskRegistered())
+                {
+                    RunHelperTask();
+                }
+            }
+        }
+
+        public void RemoveBrowserDnsPolicies()
+        {
+            bool directOk = WriteDnsPolicyRegistry("REMOVE");
+
+            if (!directOk)
+            {
+                StageDnsPolicy("REMOVE");
+
+                if (EnsureHelperTaskRegistered())
+                {
+                    RunHelperTask();
+                }
+            }
+        }
+
+        private string DnsPolicyStagingPath =>
+            Path.Combine(stagingDirectory, "dns-policy-staging.txt");
+
+        private void StageDnsPolicy(string mode)
+        {
+            try
+            {
+                Directory.CreateDirectory(stagingDirectory);
+
+                File.WriteAllLines(
+                    DnsPolicyStagingPath,
+                    ChromiumPolicyKeys.Prepend($"# LP DNS POLICY {mode}"),
+                    new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                Log($"policy staging failed: {ex.Message}");
+            }
+        }
+
+        private bool WriteDnsPolicyRegistry(string mode)
+        {
+            bool remove = mode == "REMOVE";
+
+            foreach (string keyPath in ChromiumPolicyKeys)
+            {
+                try
+                {
+                    using RegistryKey? key =
+                        Registry.CurrentUser.CreateSubKey(keyPath);
+
+                    if (key == null)
+                        return false;
+
+                    if (remove)
+                    {
+                        key.DeleteValue(DnsPolicyValueName, false);
+                    }
+                    else
+                    {
+                        key.SetValue(
+                            DnsPolicyValueName,
+                            0,
+                            RegistryValueKind.DWord);
+                    }
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    Log($"dns policy {keyPath}: {ex.Message}");
+
+                    return false;
+                }
+            }
+
+            Log(remove
+                ? "browser secure-DNS policy removed (direct)"
+                : "browser secure-DNS disabled via policy (direct)");
+
+            return true;
         }
 
         // ============================================================
@@ -365,6 +484,14 @@ namespace LochlanProductivity.Services
                 "$dir='" + stagingDirectory + "'; " +
                 "$src=Join-Path $dir 'hosts-staging.txt'; " +
                 "try { " +
+                "if (Test-Path (Join-Path $dir 'dns-policy-staging.txt')) { " +
+                "$pol = Get-Content (Join-Path $dir 'dns-policy-staging.txt'); " +
+                "$mode = ($pol | Select-Object -First 1); " +
+                "foreach ($k in ($pol | Select-Object -Skip 1)) { if (-not $k.Trim()) { continue } " +
+                "$kp = Join-Path 'HKCU:' $k; " +
+                "if ($mode -match 'REMOVE') { if (Test-Path $kp) { Remove-ItemProperty -Path $kp -Name BuiltInDnsClientEnabled -ErrorAction SilentlyContinue } } " +
+                "else { New-Item -Path $kp -Force | Out-Null; Set-ItemProperty -Path $kp -Name BuiltInDnsClientEnabled -Value 0 -Type DWord } } " +
+                "Remove-Item (Join-Path $dir 'dns-policy-staging.txt') -ErrorAction SilentlyContinue } " +
                 "if (-not (Test-Path $src)) { throw 'no staging file' } " +
                 "$c = Get-Content $src -Raw; " +
                 "if (-not $c.Contains('LochlanProductivity Block')) { throw 'sanity' } " +
