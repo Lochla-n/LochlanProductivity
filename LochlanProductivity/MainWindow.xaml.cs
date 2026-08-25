@@ -4973,6 +4973,11 @@ namespace LochlanProductivity
             }
         }
 
+        public void ShowFromHiddenState()
+        {
+            ShowMainWindow();
+        }
+
         private void ShowMainWindow()
         {
             try
