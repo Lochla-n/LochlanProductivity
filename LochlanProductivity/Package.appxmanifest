@@ -96,6 +96,12 @@
 		<rescap:Capability
 		  Name="runFullTrust" />
 
+		<!-- Lets the packaged app launch its elevated hosts-file
+		     helper (UAC prompt). Required when deployed as MSIX;
+		     unpackaged runs elevate natively. -->
+		<rescap:Capability
+		  Name="allowElevation" />
+
 	</Capabilities>
 
 </Package>
