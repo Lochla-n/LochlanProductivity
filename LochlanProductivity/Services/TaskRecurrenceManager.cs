@@ -41,6 +41,7 @@ namespace LochlanProductivity.Services
             if (!task.IsRecurring)
             {
                 task.IsCompleted = true;
+                task.LastModified = DateTime.UtcNow;
                 return;
             }
 
@@ -51,6 +52,8 @@ namespace LochlanProductivity.Services
                 CalculateNextDueDate(task);
 
             task.IsCompleted = true;
+
+            task.LastModified = DateTime.UtcNow;
         }
 
         // ============================================================
@@ -71,25 +74,57 @@ namespace LochlanProductivity.Services
                     task.DueDate.Date <= DateTime.Today)
                 {
                     task.IsCompleted = false;
+
+                    task.LastModified = DateTime.UtcNow;
                 }
             }
         }
 
         // ============================================================
         // CALCULATE NEXT DUE DATE
+        //
+        // Fast-forwards past missed cycles so a task that was not
+        // completed for several days resurfaces with a due date in
+        // the future instead of staying stuck in the past.
         // ============================================================
 
         public DateTime CalculateNextDueDate(
             TodoTask task)
         {
-            DateTime currentDate =
-                task.DueDate.Date;
+            DateTime next =
+                AdvanceOnce(
+                    task,
+                    task.DueDate.Date);
 
+            int guard = 0;
+
+            while (next.Date <= DateTime.Today &&
+                   guard++ < 3650)
+            {
+                DateTime advanced =
+                    AdvanceOnce(task, next);
+
+                // Protect against non-advancing recurrence settings.
+                if (advanced.Date <= next.Date)
+                {
+                    advanced = next.Date.AddDays(1);
+                }
+
+                next = advanced;
+            }
+
+            return next;
+        }
+
+        private DateTime AdvanceOnce(
+            TodoTask task,
+            DateTime fromDate)
+        {
             switch (task.Recurrence)
             {
                 case RecurrenceType.Daily:
 
-                    return currentDate.AddDays(1);
+                    return fromDate.AddDays(1);
 
                 case RecurrenceType.EveryNDays:
 
@@ -98,18 +133,18 @@ namespace LochlanProductivity.Services
                             1,
                             task.RecurrenceInterval);
 
-                    return currentDate.AddDays(
+                    return fromDate.AddDays(
                         interval);
 
                 case RecurrenceType.WeeklyDays:
 
                     return GetNextWeeklyDate(
-                        currentDate,
+                        fromDate,
                         task.RecurrenceDays);
 
                 default:
 
-                    return currentDate;
+                    return fromDate;
             }
         }
 

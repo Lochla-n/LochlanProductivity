@@ -106,7 +106,9 @@ namespace LochlanProductivity.Services
                         startTime,
 
                     EndTime =
-                        endTime
+                        endTime,
+
+                    LastModified = DateTime.UtcNow
                 };
 
             schedules.Add(schedule);

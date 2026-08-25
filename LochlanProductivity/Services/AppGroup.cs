@@ -11,6 +11,9 @@ namespace LochlanProductivity.Services
 
         public string Description { get; set; } = "";
 
+        // Used by SyncManager to merge changes between computers.
+        public DateTime LastModified { get; set; } = DateTime.UtcNow;
+
         public List<LochlanProductivity.BlockedApp> Apps { get; set; } = new();
     }
 }

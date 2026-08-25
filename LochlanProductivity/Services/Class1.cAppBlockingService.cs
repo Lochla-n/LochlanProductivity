@@ -49,10 +49,16 @@ namespace LochlanProductivity.Services
 
         // ============================================================
         // CHECK BLOCKED APPS
+        //
+        // Callers provide the effective blocked apps for each
+        // incomplete task (groups expanded via PolicyManager).
+        // This keeps the service read-only - no task mutation.
         // ============================================================
 
         public List<BlockedAppStatus> CheckBlockedApps(
-            IEnumerable<LochlanProductivity.TodoTask> tasks)
+            IReadOnlyDictionary<
+                LochlanProductivity.TodoTask,
+                IReadOnlyList<BlockedApp>> blockedAppsPerTask)
         {
             List<BlockedAppStatus> statuses =
                 new();
@@ -61,15 +67,19 @@ namespace LochlanProductivity.Services
                 return statuses;
 
             foreach (
-                LochlanProductivity.TodoTask task
-                in tasks)
+                KeyValuePair<
+                    LochlanProductivity.TodoTask,
+                    IReadOnlyList<BlockedApp>> pair
+                in blockedAppsPerTask)
             {
+                LochlanProductivity.TodoTask task = pair.Key;
+
                 if (task.IsCompleted)
                     continue;
 
                 foreach (
                     BlockedApp app
-                    in task.BlockedApps)
+                    in pair.Value)
                 {
                     List<Process> processes =
                         GetApplicationProcesses(app);
@@ -102,10 +112,16 @@ namespace LochlanProductivity.Services
 
         // ============================================================
         // ENFORCE BLOCKING
+        //
+        // Same contract as CheckBlockedApps: the caller supplies the
+        // effective blocked apps per task so this method never has
+        // to mutate task objects.
         // ============================================================
 
         public List<BlockedAppStatus> EnforceBlocking(
-            IEnumerable<LochlanProductivity.TodoTask> tasks)
+            IReadOnlyDictionary<
+                LochlanProductivity.TodoTask,
+                IReadOnlyList<BlockedApp>> blockedAppsPerTask)
         {
             List<BlockedAppStatus> blockedApps =
                 new();
@@ -114,15 +130,19 @@ namespace LochlanProductivity.Services
                 return blockedApps;
 
             foreach (
-                LochlanProductivity.TodoTask task
-                in tasks)
+                KeyValuePair<
+                    LochlanProductivity.TodoTask,
+                    IReadOnlyList<BlockedApp>> pair
+                in blockedAppsPerTask)
             {
+                LochlanProductivity.TodoTask task = pair.Key;
+
                 if (task.IsCompleted)
                     continue;
 
                 foreach (
                     BlockedApp app
-                    in task.BlockedApps)
+                    in pair.Value)
                 {
                     List<Process> processes =
                         GetApplicationProcesses(app);

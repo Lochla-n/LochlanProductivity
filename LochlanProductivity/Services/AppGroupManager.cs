@@ -143,7 +143,8 @@ namespace LochlanProductivity.Services
             {
                 Id = id,
                 Name = name,
-                Description = description
+                Description = description,
+                LastModified = DateTime.UtcNow
             };
 
             groups.Add(group);
@@ -212,6 +213,8 @@ namespace LochlanProductivity.Services
 
             group.Name = newName.Trim();
 
+            group.LastModified = DateTime.UtcNow;
+
             Save();
 
             return true;
@@ -232,6 +235,8 @@ namespace LochlanProductivity.Services
 
             group.Description =
                 description?.Trim() ?? "";
+
+            group.LastModified = DateTime.UtcNow;
 
             Save();
 
@@ -283,6 +288,8 @@ namespace LochlanProductivity.Services
                         app.ExecutablePath
                 });
 
+            group.LastModified = DateTime.UtcNow;
+
             Save();
 
             return true;
@@ -313,6 +320,8 @@ namespace LochlanProductivity.Services
                 return false;
 
             group.Apps.Remove(app);
+
+            group.LastModified = DateTime.UtcNow;
 
             Save();
 

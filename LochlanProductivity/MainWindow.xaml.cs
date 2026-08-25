@@ -23,7 +23,6 @@ namespace LochlanProductivity
 
         private readonly SyncManager syncManager = new();
 
-
         private readonly TaskRecurrenceManager taskRecurrenceManager = new();
 
         private readonly AppBlockingService blockingService = new();
@@ -36,7 +35,9 @@ namespace LochlanProductivity
 
         private readonly DailyPromptManager dailyPromptManager = new();
 
-        private readonly TaskRecurrenceManager recurrenceManager = new();
+        private readonly StartupManager startupManager = new();
+
+        private TrayIconManager? trayIconManager;
 
         // ============================================================
         // TASKS
@@ -55,20 +56,6 @@ namespace LochlanProductivity
         // ============================================================
         // AVAILABLE APPLICATIONS
         // ============================================================
-        private SyncData CreateCurrentSyncData()
-        {
-            return syncManager.CreateSyncData(
-                tasks,
-                groupManager.Groups,
-                scheduleManager.Schedules);
-        }
-
-        private async Task SaveCurrentSyncDataAsync()
-        {
-            SyncData data = CreateCurrentSyncData();
-
-            await syncManager.SaveSyncDataAsync(data);
-        }
 
         private readonly List<BlockedApp> availableApps = new()
         {
@@ -127,6 +114,8 @@ namespace LochlanProductivity
 
             StartBlockingTimer();
 
+            InitializeTrayIcon();
+
             if (this.Content is FrameworkElement root)
             {
                 root.Loaded += MainWindow_ContentLoaded;
@@ -154,7 +143,8 @@ namespace LochlanProductivity
             await LoadTasksAsync();
 
             // Activate recurring tasks that have become due.
-            taskRecurrenceManager.UpdateRecurringTasks(tasks);
+            taskRecurrenceManager.UpdateRecurringTasks(
+                ActiveTasks.ToList());
 
             // Display whatever was loaded.
             RefreshTaskList();
@@ -165,15 +155,67 @@ namespace LochlanProductivity
 
             UpdateBlockingStatus();
 
+            await SyncOnStartupAsync();
+
             await CheckDailyPromptAsync();
+
+            await UpdateStartupToggleButtonAsync();
+        }
+
+        // ============================================================
+        // STARTUP SYNC (silent)
+        //
+        // Pulls changes the laptop pushed through Syncthing while
+        // this computer was off. Merge-based, so it cannot clobber
+        // local edits; only touches UI when something changed.
+        // ============================================================
+
+        private async System.Threading.Tasks.Task SyncOnStartupAsync()
+        {
+            try
+            {
+                if (!syncManager.HasSyncData())
+                    return;
+
+                SyncResult result =
+                    await syncManager.SyncNowAsync(
+                        tasks,
+                        groupManager,
+                        scheduleManager);
+
+                if (result.Success &&
+                    (result.TaskChanges > 0 ||
+                     result.GroupChanges > 0 ||
+                     result.ScheduleChanges > 0))
+                {
+                    RefreshTaskList();
+
+                    UpdateFocusModeLock();
+
+                    UpdateScheduledBlockingState();
+
+                    UpdateBlockingStatus();
+
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Startup sync merged: {result.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Startup sync failed: {ex}");
+            }
         }
 
         // ============================================================
         // FOCUS MODE LOCK STATE
         // ============================================================
 
+        private IEnumerable<TodoTask> ActiveTasks =>
+            tasks.Where(task => !task.IsDeleted);
+
         private bool HasIncompleteTasks =>
-            tasks.Any(task => !task.IsCompleted);
+            ActiveTasks.Any(task => !task.IsCompleted);
 
         private bool IsFocusModeLocked =>
             HasIncompleteTasks;
@@ -218,7 +260,7 @@ namespace LochlanProductivity
             //
             // This is especially important after restarting the app:
             // saved tasks should simply reappear.
-            if (tasks.Any(task => !task.IsCompleted))
+            if (ActiveTasks.Any(task => !task.IsCompleted))
             {
                 return;
             }
@@ -240,38 +282,60 @@ namespace LochlanProductivity
                         AcceptsReturn = false
                     };
 
+                StackPanel dialogContent =
+                    new StackPanel
+                    {
+                        Spacing = 10
+                    };
+
+                if (dailyPromptManager.CurrentStreak > 0)
+                {
+                    dialogContent.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                $"Streak: {dailyPromptManager.CurrentStreak} day(s) " +
+                                $"(best {dailyPromptManager.BestStreak})",
+
+                            FontWeight =
+                                Microsoft.UI.Text.FontWeights.SemiBold,
+
+                            Opacity = 0.85
+                        });
+                }
+
+                dialogContent.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            "Before you get started, " +
+                            "add at least one thing you " +
+                            "need to accomplish today.",
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Opacity = 0.8
+                    });
+
+                dialogContent.Children.Add(taskBox);
+
                 ContentDialog dialog =
                     new ContentDialog
                     {
                         Title =
                             "Plan Your Day",
 
-                        Content =
-                            new StackPanel
-                            {
-                                Spacing = 10,
-
-                                Children =
-                                {
-                            new TextBlock
-                            {
-                                Text =
-                                    "Before you get started, " +
-                                    "add at least one thing you " +
-                                    "need to accomplish today.",
-
-                                TextWrapping =
-                                    TextWrapping.Wrap,
-
-                                Opacity = 0.8
-                            },
-
-                            taskBox
-                                }
-                            },
+                        Content = dialogContent,
 
                         PrimaryButtonText =
                             "Add Task",
+
+                        SecondaryButtonText =
+                            "Skip for today",
+
+                        CloseButtonText =
+                            "Cancel",
 
                         XamlRoot =
                             this.Content.XamlRoot
@@ -279,6 +343,15 @@ namespace LochlanProductivity
 
                 ContentDialogResult result =
                     await dialog.ShowAsync();
+
+                if (result == ContentDialogResult.Secondary)
+                {
+                    // Skipping is allowed but resets the streak and,
+                    // with no tasks, blocking stays off.
+                    dailyPromptManager.SkipToday();
+
+                    break;
+                }
 
                 if (result != ContentDialogResult.Primary)
                 {
@@ -390,7 +463,7 @@ namespace LochlanProductivity
             panel.Children.Add(scrollViewer);
 
             IEnumerable<TodoTask> recurringTasks =
-                tasks.Where(task => task.IsRecurring);
+                ActiveTasks.Where(task => task.IsRecurring);
 
             if (!recurringTasks.Any())
             {
@@ -911,13 +984,13 @@ namespace LochlanProductivity
             if (!blockingService.IsBlockingActive)
                 return;
 
-            foreach (TodoTask task in tasks)
-            {
-                policyManager.ExpandTaskGroups(task);
-            }
+            Dictionary<TodoTask, IReadOnlyList<BlockedApp>>
+                blockedAppsPerTask =
+                    BuildEffectiveBlockedAppsMap();
 
             List<BlockedAppStatus> blockedApps =
-                blockingService.EnforceBlocking(tasks);
+                blockingService.EnforceBlocking(
+                    blockedAppsPerTask);
 
             if (blockedApps.Count == 0)
                 return;
@@ -969,6 +1042,32 @@ namespace LochlanProductivity
         }
 
         // ============================================================
+        // EFFECTIVE BLOCKED APPS MAP
+        //
+        // Pure per-tick computation: groups are expanded through
+        // PolicyManager without ever mutating task objects, so the
+        // timer no longer pollutes saved tasks with group apps.
+        // ============================================================
+
+        private Dictionary<TodoTask, IReadOnlyList<BlockedApp>>
+            BuildEffectiveBlockedAppsMap()
+        {
+            Dictionary<TodoTask, IReadOnlyList<BlockedApp>> map =
+                new();
+
+            foreach (TodoTask task in ActiveTasks)
+            {
+                if (task.IsCompleted)
+                    continue;
+
+                map[task] =
+                    policyManager.GetEffectiveBlockedApps(task);
+            }
+
+            return map;
+        }
+
+        // ============================================================
         // STATUS
         // ============================================================
 
@@ -977,13 +1076,13 @@ namespace LochlanProductivity
             if (!blockingService.IsBlockingActive)
                 return;
 
-            foreach (TodoTask task in tasks)
-            {
-                policyManager.ExpandTaskGroups(task);
-            }
+            Dictionary<TodoTask, IReadOnlyList<BlockedApp>>
+                blockedAppsPerTask =
+                    BuildEffectiveBlockedAppsMap();
 
             List<BlockedAppStatus> statuses =
-                blockingService.CheckBlockedApps(tasks);
+                blockingService.CheckBlockedApps(
+                    blockedAppsPerTask);
 
             // --------------------------------------------------------
             // COUNT UNIQUE APPLICATIONS
@@ -1099,7 +1198,6 @@ namespace LochlanProductivity
             RefreshTaskList();
 
             await SaveTasksAsync();
-            await SaveCurrentSyncDataAsync();
         }
 
         // ============================================================
@@ -1148,7 +1246,11 @@ namespace LochlanProductivity
                 return;
             }
 
-            tasks.Remove(task);
+            // Soft-delete: the tombstone syncs to other computers
+            // so SyncManager can keep deletions consistent.
+            task.IsDeleted = true;
+
+            task.LastModified = DateTime.UtcNow;
 
             lastBlockedNotification = null;
 
@@ -1169,7 +1271,16 @@ namespace LochlanProductivity
         {
             TaskList.Children.Clear();
 
-            foreach (TodoTask task in tasks)
+            List<TodoTask> orderedTasks = ActiveTasks
+                .OrderBy(task => task.IsCompleted)
+                .ThenByDescending(task => (int)task.Priority)
+                .ThenBy(GetEffectiveDeadline)
+                .ThenBy(
+                    task => task.Title,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (TodoTask task in orderedTasks)
             {
                 Grid taskRow =
                     new Grid
@@ -1201,20 +1312,76 @@ namespace LochlanProductivity
                             GridLength.Auto
                     });
 
+                taskRow.ColumnDefinitions.Add(
+                    new ColumnDefinition
+                    {
+                        Width =
+                            GridLength.Auto
+                    });
+
                 // ----------------------------------------------------
                 // CHECKBOX
                 // ----------------------------------------------------
+
+                TextBlock titleText =
+                    new TextBlock
+                    {
+                        Text =
+                            task.Title,
+
+                        FontSize = 16,
+
+                        TextWrapping =
+                            TextWrapping.Wrap
+                    };
+
+                string metaLine =
+                    GetTaskMetaLine(task);
+
+                TextBlock metaText =
+                    new TextBlock
+                    {
+                        Text = metaLine,
+
+                        FontSize = 12,
+
+                        Opacity = 0.7,
+
+                        TextWrapping =
+                            TextWrapping.Wrap,
+
+                        Visibility =
+                            string.IsNullOrWhiteSpace(metaLine)
+                                ? Visibility.Collapsed
+                                : Visibility.Visible
+                    };
+
+                if (IsTaskOverdue(task))
+                {
+                    metaText.Opacity = 1;
+
+                    metaText.Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.Colors.OrangeRed);
+                }
 
                 CheckBox checkBox =
                     new CheckBox
                     {
                         Content =
-                            task.Title,
+                            new StackPanel
+                            {
+                                Spacing = 2,
+
+                                Children =
+                                {
+                                    titleText,
+                                    metaText
+                                }
+                            },
 
                         IsChecked =
                             task.IsCompleted,
-
-                        FontSize = 16,
 
                         VerticalAlignment =
                             VerticalAlignment.Center
@@ -1225,19 +1392,32 @@ namespace LochlanProductivity
                     {
                         task.IsCompleted = true;
 
+                        task.LastModified = DateTime.UtcNow;
+
                         lastBlockedNotification = null;
+
+                        // Recurring tasks advance to their next
+                        // occurrence instead of disappearing.
+                        if (task.IsRecurring)
+                        {
+                            taskRecurrenceManager.CompleteTask(task);
+                        }
 
                         await SaveTasksAsync();
 
                         UpdateFocusModeLock();
 
                         UpdateBlockingStatus();
+
+                        RefreshTaskList();
                     };
 
                 checkBox.Unchecked +=
                     async (sender, e) =>
                     {
                         task.IsCompleted = false;
+
+                        task.LastModified = DateTime.UtcNow;
 
                         lastBlockedNotification = null;
 
@@ -1248,11 +1428,44 @@ namespace LochlanProductivity
                         await SaveTasksAsync();
 
                         UpdateBlockingStatus();
+
+                        RefreshTaskList();
                     };
 
                 Grid.SetColumn(
                     checkBox,
                     0);
+
+                // ----------------------------------------------------
+                // EDIT BUTTON
+                // ----------------------------------------------------
+
+                Button editButton =
+                    new Button
+                    {
+                        Content =
+                            "Edit",
+
+                        VerticalAlignment =
+                            VerticalAlignment.Center,
+
+                        Margin =
+                            new Thickness(
+                                12,
+                                0,
+                                6,
+                                0)
+                    };
+
+                editButton.Click +=
+                    (sender, e) =>
+                    {
+                        OpenEditTaskDialog(task);
+                    };
+
+                Grid.SetColumn(
+                    editButton,
+                    1);
 
                 // ----------------------------------------------------
                 // BLOCKED APPS BUTTON
@@ -1283,7 +1496,7 @@ namespace LochlanProductivity
 
                 Grid.SetColumn(
                     blockedAppsButton,
-                    1);
+                    2);
 
                 // ----------------------------------------------------
                 // REMOVE BUTTON
@@ -1307,9 +1520,11 @@ namespace LochlanProductivity
 
                 Grid.SetColumn(
                     removeButton,
-                    2);
+                    3);
 
                 taskRow.Children.Add(checkBox);
+
+                taskRow.Children.Add(editButton);
 
                 taskRow.Children.Add(blockedAppsButton);
 
@@ -1342,6 +1557,247 @@ namespace LochlanProductivity
                 return "1 blocked app";
 
             return $"{count} blocked apps";
+        }
+
+        // ============================================================
+        // DEADLINE / PRIORITY HELPERS
+        // ============================================================
+
+        private DateTime GetEffectiveDeadline(
+            TodoTask task)
+        {
+            return task.DueDate.Date +
+                (task.DueTimeOfDay ??
+                    new TimeSpan(23, 59, 0));
+        }
+
+        private bool IsTaskOverdue(
+            TodoTask task)
+        {
+            return !task.IsCompleted &&
+                GetEffectiveDeadline(task) < DateTime.Now;
+        }
+
+        private string GetTaskMetaLine(
+            TodoTask task)
+        {
+            if (task.IsCompleted && task.IsRecurring)
+            {
+                return $"Done · next {task.DueDate:d}";
+            }
+
+            List<string> parts = new();
+
+            if (task.IsRecurring)
+            {
+                parts.Add(
+                    taskRecurrenceManager
+                        .GetRecurrenceDescription(task));
+            }
+
+            if (task.Priority != TaskPriority.Normal)
+            {
+                parts.Add($"{task.Priority}");
+            }
+
+            if (task.DueTimeOfDay != null)
+            {
+                parts.Add(
+                    $"due {GetEffectiveDeadline(task):t}");
+            }
+            else if (!task.IsRecurring &&
+                     task.DueDate.Date != DateTime.Today)
+            {
+                parts.Add($"due {task.DueDate:d}");
+            }
+
+            if (IsTaskOverdue(task))
+            {
+                parts.Add("OVERDUE");
+            }
+
+            return string.Join(" · ", parts);
+        }
+
+        // ============================================================
+        // EDIT TASK DIALOG
+        // ============================================================
+
+        private async void OpenEditTaskDialog(
+            TodoTask task)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Tasks are locked while other tasks are incomplete.\n\n" +
+                    "Complete all tasks before editing.");
+
+                return;
+            }
+
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            TextBox titleBox =
+                new TextBox
+                {
+                    Header = "Task name",
+
+                    Text = task.Title
+                };
+
+            panel.Children.Add(titleBox);
+
+            ComboBox priorityBox =
+                new ComboBox
+                {
+                    Header = "Priority",
+
+                    HorizontalAlignment =
+                        HorizontalAlignment.Stretch,
+
+                    SelectedIndex = (int)task.Priority
+                };
+
+            priorityBox.Items.Add("Low");
+            priorityBox.Items.Add("Normal");
+            priorityBox.Items.Add("High");
+
+            panel.Children.Add(priorityBox);
+
+            if (task.IsRecurring)
+            {
+                panel.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            taskRecurrenceManager
+                                .GetRecurrenceDescription(task) +
+                            $", next due {task.DueDate:d}",
+
+                        Opacity = 0.7,
+
+                        TextWrapping =
+                            TextWrapping.Wrap
+                    });
+            }
+
+            DatePicker datePicker =
+                new DatePicker
+                {
+                    Header = "Due date",
+
+                    Date =
+                        new DateTimeOffset(task.DueDate.Date)
+                };
+
+            panel.Children.Add(datePicker);
+
+            CheckBox hasTimeBox =
+                new CheckBox
+                {
+                    Content = "Set a due time",
+
+                    IsChecked = task.DueTimeOfDay != null
+                };
+
+            TimePicker timePicker =
+                new TimePicker
+                {
+                    Header = "Due time",
+
+                    Time =
+                        task.DueTimeOfDay ??
+                            new TimeSpan(17, 0, 0),
+
+                    IsEnabled = task.DueTimeOfDay != null
+                };
+
+            hasTimeBox.Checked +=
+                (sender, e) => timePicker.IsEnabled = true;
+
+            hasTimeBox.Unchecked +=
+                (sender, e) => timePicker.IsEnabled = false;
+
+            panel.Children.Add(hasTimeBox);
+
+            panel.Children.Add(timePicker);
+
+            ScrollViewer scrollViewer =
+                new ScrollViewer
+                {
+                    Content = panel,
+
+                    MaxHeight = 480,
+
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+
+                    HorizontalScrollBarVisibility =
+                        ScrollBarVisibility.Disabled
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = $"Edit Task - {task.Title}",
+
+                    Content = scrollViewer,
+
+                    PrimaryButtonText = "Save",
+
+                    CloseButtonText = "Cancel",
+
+                    DefaultButton =
+                        ContentDialogButton.Primary,
+
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+            ContentDialogResult result =
+                await dialog.ShowAsync();
+
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string newTitle =
+                titleBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newTitle))
+            {
+                await ShowSimpleMessageAsync(
+                    "Please enter a task name.");
+
+                return;
+            }
+
+            task.Title = newTitle;
+
+            task.Priority =
+                (TaskPriority)Math.Max(
+                    0,
+                    priorityBox.SelectedIndex);
+
+            task.DueDate =
+                datePicker.Date.Date;
+
+            task.DueTimeOfDay =
+                hasTimeBox.IsChecked == true
+                    ? timePicker.Time
+                    : null;
+
+            task.LastModified = DateTime.UtcNow;
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+
+            UpdateBlockingStatus();
         }
 
         // ============================================================
@@ -1704,7 +2160,7 @@ namespace LochlanProductivity
                 }
             }
 
-            policyManager.ExpandTaskGroups(task);
+            task.LastModified = DateTime.UtcNow;
 
             RefreshTaskList();
 
@@ -3916,32 +4372,29 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
-            bool success =
+            SyncResult result =
                 await syncManager.SyncNowAsync(
                     tasks,
                     groupManager,
                     scheduleManager);
 
-            if (success)
+            if (result.Success)
             {
-                await new ContentDialog
-                {
-                    Title = "Sync Complete",
-                    Content = "Your data has been synchronized.",
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                }.ShowAsync();
+                // Merged items may have changed anything - refresh
+                // the whole UI state.
+                RefreshTaskList();
+
+                UpdateFocusModeLock();
+
+                UpdateScheduledBlockingState();
+
+                UpdateBlockingStatus();
             }
-            else
-            {
-                await new ContentDialog
-                {
-                    Title = "Sync Failed",
-                    Content = "The app could not synchronize your data.",
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                }.ShowAsync();
-            }
+
+            await ShowSimpleMessageAsync(
+                result.Success
+                    ? $"Sync complete.\n\n{result.Message}"
+                    : $"Sync failed.\n\n{result.Message}");
         }
 
 
@@ -4113,6 +4566,14 @@ namespace LochlanProductivity
                     return;
                 }
 
+                // Purge deletion tombstones older than 30 days so
+                // tasks.json does not grow forever.
+                loadedTasks.RemoveAll(
+                    task =>
+                        task.IsDeleted &&
+                        task.LastModified <
+                            DateTime.UtcNow.AddDays(-30));
+
                 // Only replace the current list AFTER successfully
                 // loading the save file.
                 tasks.Clear();
@@ -4171,10 +4632,6 @@ namespace LochlanProductivity
                         }
                     }
 
-                    // Expand groups so the blocking system knows
-                    // which actual applications belong to the task.
-                    policyManager.ExpandTaskGroups(task);
-
                     tasks.Add(task);
                 }
 
@@ -4207,6 +4664,138 @@ namespace LochlanProductivity
                 //
                 // Most importantly, don't turn a loading problem
                 // into permanent data loss.
+            }
+        }
+
+        // ============================================================
+        // TRAY ICON
+        // ============================================================
+
+        private void InitializeTrayIcon()
+        {
+            try
+            {
+                trayIconManager =
+                    new TrayIconManager
+                    {
+                        OpenRequested = () =>
+                            DispatcherQueue.TryEnqueue(
+                                () => ShowMainWindow()),
+
+                        ExitRequested = () =>
+                            DispatcherQueue.TryEnqueue(
+                                async () =>
+                                    await ExitFromTrayAsync())
+                    };
+
+                trayIconManager.Show("Lochlan Productivity");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Tray icon unavailable: {ex}");
+            }
+        }
+
+        private void ShowMainWindow()
+        {
+            try
+            {
+                this.AppWindow.Show();
+            }
+            catch
+            {
+            }
+
+            this.Activate();
+        }
+
+        private async System.Threading.Tasks.Task
+            ExitFromTrayAsync()
+        {
+            // Bring the window back so the confirmation dialog has
+            // a XamlRoot and the user sees what is happening.
+            ShowMainWindow();
+
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Cannot quit while tasks are incomplete.\n\n" +
+                    "Complete all of your tasks first.");
+
+                return;
+            }
+
+            trayIconManager?.Dispose();
+
+            trayIconManager = null;
+
+            App.CurrentApp?.ExitApplication();
+
+            Application.Current.Exit();
+        }
+
+        // ============================================================
+        // START WITH WINDOWS
+        // ============================================================
+
+        private async System.Threading.Tasks.Task
+            UpdateStartupToggleButtonAsync()
+        {
+            try
+            {
+                StartupState state =
+                    await startupManager.GetStateAsync();
+
+                StartupToggleButton.Content =
+                    state switch
+                    {
+                        StartupState.Enabled =>
+                            "Starts with Windows ✓",
+
+                        StartupState.DisabledByUser =>
+                            "Startup off (Task Manager)",
+
+                        StartupState.DisabledByPolicy =>
+                            "Startup blocked by policy",
+
+                        _ => "Start with Windows ✗"
+                    };
+            }
+            catch
+            {
+                StartupToggleButton.Content =
+                    "Start with Windows";
+            }
+        }
+
+        private async void StartupToggle_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (HasIncompleteTasks)
+            {
+                await ShowSimpleMessageAsync(
+                    "Startup settings are locked while tasks are incomplete.\n\n" +
+                    "Complete all tasks before changing settings.");
+
+                return;
+            }
+
+            bool currentlyEnabled =
+                (await startupManager.GetStateAsync()) ==
+                    StartupState.Enabled;
+
+            bool success =
+                await startupManager.SetEnabledAsync(
+                    !currentlyEnabled);
+
+            await UpdateStartupToggleButtonAsync();
+
+            if (!success)
+            {
+                await ShowSimpleMessageAsync(
+                    "Could not change the Windows startup setting.");
             }
         }
 
@@ -4298,9 +4887,16 @@ namespace LochlanProductivity
     public class TodoTask
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        public DateTime LastModified { get; set; } = DateTime.UtcNow;
         public string Title { get; set; } = "";
 
         public bool IsCompleted { get; set; } = false;
+
+        // Tombstone for sync: removed tasks stay in the save file
+        // so deletions propagate between computers, but they are
+        // invisible and never enforced.
+        public bool IsDeleted { get; set; } = false;
 
         public List<string> BlockedGroups { get; set; } = new();
 
@@ -4311,6 +4907,13 @@ namespace LochlanProductivity
         // ============================================================
 
         public bool IsRecurring { get; set; } = false;
+
+        public TaskPriority Priority { get; set; } =
+            TaskPriority.Normal;
+
+        // Optional time-of-day on top of DueDate.
+        // Null means "any time that day" (end of day).
+        public TimeSpan? DueTimeOfDay { get; set; }
 
         public RecurrenceType Recurrence { get; set; } =
             RecurrenceType.None;
@@ -4335,6 +4938,13 @@ namespace LochlanProductivity
         Daily,
         EveryNDays,
         WeeklyDays
+    }
+
+    public enum TaskPriority
+    {
+        Low = 0,
+        Normal = 1,
+        High = 2
     }
 
     public class BlockedApp

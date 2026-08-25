@@ -23,6 +23,9 @@ namespace LochlanProductivity.Services
         public TimeSpan EndTime { get; set; } =
             new TimeSpan(22, 0, 0);
 
+        // Used by SyncManager to merge changes between computers.
+        public DateTime LastModified { get; set; } = DateTime.UtcNow;
+
         // ============================================================
         // CHECK WHETHER SCHEDULE IS ACTIVE
         // ============================================================

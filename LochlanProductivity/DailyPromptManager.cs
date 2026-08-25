@@ -30,12 +30,46 @@ namespace LochlanProductivity
             return data.LastPromptDate.Date != DateTime.Now.Date;
         }
 
+        public int CurrentStreak => data.CurrentStreak;
+
+        public int BestStreak => data.BestStreak;
+
         // ============================================================
-        // MARK TODAY'S PROMPT AS SHOWN
+        // MARK TODAY'S PROMPT AS SHOWN (streak continues)
         // ============================================================
 
         public void MarkPromptShown()
         {
+            DateTime today =
+                DateTime.Now.Date;
+
+            if (data.LastPromptDate == today.AddDays(-1))
+            {
+                data.CurrentStreak++;
+            }
+            else if (data.LastPromptDate != today)
+            {
+                data.CurrentStreak = 1;
+            }
+
+            if (data.CurrentStreak > data.BestStreak)
+            {
+                data.BestStreak = data.CurrentStreak;
+            }
+
+            data.LastPromptDate = today;
+
+            Save();
+        }
+
+        // ============================================================
+        // SKIP TODAY (streak resets)
+        // ============================================================
+
+        public void SkipToday()
+        {
+            data.CurrentStreak = 0;
+
             data.LastPromptDate =
                 DateTime.Now.Date;
 
@@ -134,5 +168,9 @@ namespace LochlanProductivity
     public class DailyPromptData
     {
         public DateTime LastPromptDate { get; set; }
+
+        public int CurrentStreak { get; set; }
+
+        public int BestStreak { get; set; }
     }
 }
