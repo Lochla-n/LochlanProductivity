@@ -288,7 +288,8 @@ namespace LochlanProductivity.Services
             IEnumerable<LochlanProductivity.TodoTask> tasks,
             IEnumerable<AppGroup> appGroups,
             IEnumerable<BlockingSchedule> blockingSchedules,
-            IEnumerable<string> blockedSites)
+            IEnumerable<string> blockedSites,
+            DateTime? lastDailyPromptDate = null)
         {
             return new SyncData
             {
@@ -310,7 +311,10 @@ namespace LochlanProductivity.Services
 
                 BlockedSites =
                     new List<string>(
-                        blockedSites)
+                        blockedSites),
+
+                LastDailyPromptDate =
+                    lastDailyPromptDate?.Date
             };
         }
 
@@ -432,14 +436,16 @@ namespace LochlanProductivity.Services
             List<LochlanProductivity.TodoTask> tasks,
             AppGroupManager groupManager,
             ScheduleManager scheduleManager,
-            BlockedSitesManager blockedSites)
+            BlockedSitesManager blockedSites,
+            DateTime? lastDailyPromptDate = null)
         {
             SyncData data =
                 CreateSyncData(
                     tasks,
                     groupManager.Groups,
                     scheduleManager.Schedules,
-                    blockedSites.Domains);
+                    blockedSites.Domains,
+                    lastDailyPromptDate);
 
             return await SaveSyncDataAsync(data);
         }
@@ -452,7 +458,8 @@ namespace LochlanProductivity.Services
             List<LochlanProductivity.TodoTask> tasks,
             AppGroupManager groupManager,
             ScheduleManager scheduleManager,
-            BlockedSitesManager blockedSites)
+            BlockedSitesManager blockedSites,
+            DateTime? localDailyPromptDate = null)
         {
             try
             {
@@ -470,7 +477,8 @@ namespace LochlanProductivity.Services
                             tasks,
                             groupManager,
                             scheduleManager,
-                            blockedSites);
+                            blockedSites,
+                            localDailyPromptDate);
 
                     return new SyncResult
                     {
@@ -478,7 +486,9 @@ namespace LochlanProductivity.Services
 
                         Message = uploaded
                             ? "Created the shared sync file from this computer."
-                            : $"Could not create {SyncFilePath}."
+                            : $"Could not create {SyncFilePath}.",
+
+                        MergedDailyPromptDate = localDailyPromptDate?.Date
                     };
                 }
 
@@ -502,6 +512,36 @@ namespace LochlanProductivity.Services
                         sharedData.BlockedSites,
                         blockedSites);
 
+                // Daily prompt: newest date wins. If the other
+                // computer already did today's plan, this computer
+                // should not prompt again.
+                DateTime? remotePromptDate =
+                    sharedData.LastDailyPromptDate?.Date;
+
+                DateTime? localPromptDate =
+                    localDailyPromptDate?.Date;
+
+                DateTime? mergedPromptDate = null;
+
+                if (remotePromptDate != null &&
+                    localPromptDate != null)
+                {
+                    mergedPromptDate =
+                        remotePromptDate > localPromptDate
+                            ? remotePromptDate
+                            : localPromptDate;
+                }
+                else
+                {
+                    mergedPromptDate =
+                        remotePromptDate ?? localPromptDate;
+                }
+
+                bool dailyPromptChanged =
+                    remotePromptDate != null &&
+                    (localPromptDate == null ||
+                     remotePromptDate > localPromptDate);
+
                 // ----------------------------------------------------
                 // WRITE THE MERGED SNAPSHOT BACK so the other
                 // computer picks up this side's newer items too.
@@ -512,7 +552,8 @@ namespace LochlanProductivity.Services
                         tasks,
                         groupManager.Groups,
                         scheduleManager.Schedules,
-                        blockedSites.Domains);
+                        blockedSites.Domains,
+                        mergedPromptDate);
 
                 bool saved =
                     await SaveSyncDataAsync(merged);
@@ -528,6 +569,10 @@ namespace LochlanProductivity.Services
                     ScheduleChanges = scheduleChanges,
 
                     SiteChanges = siteChanges,
+
+                    DailyPromptChanged = dailyPromptChanged,
+
+                    MergedDailyPromptDate = mergedPromptDate,
 
                     Message = saved
                         ? $"{taskChanges} task(s), {groupChanges} group(s), {scheduleChanges} schedule(s), {siteChanges} site(s) updated."
@@ -829,5 +874,9 @@ namespace LochlanProductivity.Services
         public int ScheduleChanges { get; set; }
 
         public int SiteChanges { get; set; }
+
+        public bool DailyPromptChanged { get; set; }
+
+        public DateTime? MergedDailyPromptDate { get; set; }
     }
 }

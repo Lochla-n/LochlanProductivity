@@ -229,13 +229,21 @@ namespace LochlanProductivity
                         tasks,
                         groupManager,
                         scheduleManager,
-                        blockedSiteStore);
+                        blockedSiteStore,
+                        dailyPromptManager.LastPromptDate);
+
+                if (result.DailyPromptChanged)
+                {
+                    dailyPromptManager.ApplySyncedDate(
+                        result.MergedDailyPromptDate);
+                }
 
                 if (result.Success &&
                     (result.TaskChanges > 0 ||
-                     result.GroupChanges > 0 ||
-                     result.ScheduleChanges > 0 ||
-                     result.SiteChanges > 0))
+                      result.GroupChanges > 0 ||
+                      result.ScheduleChanges > 0 ||
+                      result.SiteChanges > 0 ||
+                      result.DailyPromptChanged))
                 {
                     RefreshTaskList();
 
@@ -4962,7 +4970,14 @@ namespace LochlanProductivity
                     tasks,
                     groupManager,
                     scheduleManager,
-                    blockedSiteStore);
+                    blockedSiteStore,
+                    dailyPromptManager.LastPromptDate);
+
+            if (result.DailyPromptChanged)
+            {
+                dailyPromptManager.ApplySyncedDate(
+                    result.MergedDailyPromptDate);
+            }
 
             if (result.Success)
             {

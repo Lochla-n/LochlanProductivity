@@ -46,5 +46,15 @@ namespace LochlanProductivity.Services
 
         public List<string> BlockedSites { get; set; } =
             new();
+
+        // ============================================================
+        // DAILY PROMPT
+        //
+        // LastPromptDate from DailyPromptManager, synced so a daily
+        // plan added on one computer suppresses the prompt on the
+        // other. Nullable for backwards compat with old syncdata.json.
+        // ============================================================
+
+        public DateTime? LastDailyPromptDate { get; set; }
     }
 }

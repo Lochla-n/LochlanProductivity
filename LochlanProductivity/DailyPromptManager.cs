@@ -34,6 +34,30 @@ namespace LochlanProductivity
 
         public int BestStreak => data.BestStreak;
 
+        public DateTime LastPromptDate => data.LastPromptDate;
+
+        // Called after a sync that brought a newer LastDailyPromptDate
+        // from the other computer. Suppresses the prompt on this
+        // computer without re-running streak increment logic (the
+        // other computer already did it).
+        public void ApplySyncedDate(DateTime? syncedDate)
+        {
+            if (syncedDate == null)
+                return;
+
+            DateTime syncedDay = syncedDate.Value.Date;
+
+            if (syncedDay <= data.LastPromptDate.Date)
+                return;
+
+            data.LastPromptDate = syncedDay;
+
+            // Do not recompute streak here — the machine that
+            // originally called MarkPromptShown already did. Just
+            // preserve the highest streak seen.
+            Save();
+        }
+
         // ============================================================
         // MARK TODAY'S PROMPT AS SHOWN (streak continues)
         // ============================================================
