@@ -54,13 +54,6 @@ namespace LochlanProductivity
         // Heartbeat throttle for webblock.log tick lines.
         private int tickHeartbeatCounter;
 
-        // Set when tasks.json fails its tamper seal: the previous
-        // list is untrusted, so blocking stays engaged and the user
-        // must rebuild today's plan before freedom returns.
-        private bool taskListTampered;
-
-        private readonly TamperSeal tamperSeal = new();
-
         private TrayIconManager? trayIconManager;
 
         // ============================================================
@@ -212,8 +205,7 @@ namespace LochlanProductivity
         {
             try
             {
-                if (taskListTampered ||
-                    !syncManager.HasSyncData())
+                if (!syncManager.HasSyncData())
                     return;
 
                 // Startup sync is allowed even while focus is
@@ -269,7 +261,6 @@ namespace LochlanProductivity
             tasks.Where(task => !task.IsDeleted);
 
         private bool HasIncompleteTasks =>
-            taskListTampered ||
             ActiveTasks.Any(task => !task.IsCompleted);
 
         private bool IsFocusModeLocked =>
@@ -319,11 +310,6 @@ namespace LochlanProductivity
             {
                 return;
             }
-
-            // Under tamper lockdown there is no trusted "today" -
-            // never prompt for a new plan until the user saves one.
-            if (taskListTampered)
-                return;
 
             // If today's prompt was already shown, don't show it again.
             if (!dailyPromptManager.ShouldShowPrompt())
@@ -4952,15 +4938,6 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
-            if (taskListTampered)
-            {
-                await ShowSimpleMessageAsync(
-                    "Sync is locked: your local task list failed " +
-                    "its tamper check. Save a fresh plan first.");
-
-                return;
-            }
-
             // While focus is enforcing, completions from the other
             // computer do not unlock tasks here (MergeTasks preserves
             // local incomplete). New tasks and edits still sync, so
@@ -5298,16 +5275,6 @@ namespace LochlanProductivity
                     tempFilePath,
                     saveFilePath,
                     true);
-
-                // Seal the exact bytes we just wrote so hand edits
-                // are detected on the next load.
-                string sealPath = saveFilePath + ".seal";
-
-                await File.WriteAllTextAsync(
-                    sealPath,
-                    tamperSeal.Compute(json));
-
-                taskListTampered = false;
             }
             catch (Exception ex)
             {
@@ -5340,36 +5307,6 @@ namespace LochlanProductivity
                 {
                     System.Diagnostics.Debug.WriteLine(
                         "Task save file is empty.");
-
-                    return;
-                }
-
-                // ----------------------------------------------------
-                // TAMPER CHECK
-                //
-                // Missing seal = trust on first use (upgrade path).
-                // Present-but-mismatched seal = the file was edited
-                // outside the app: refuse the list and lock down.
-                // ----------------------------------------------------
-
-                string? storedSeal = null;
-
-                string sealPath = saveFilePath + ".seal";
-
-                if (File.Exists(sealPath))
-                {
-                    storedSeal =
-                        await File.ReadAllTextAsync(sealPath);
-                }
-
-                if (!tamperSeal.Verify(json, storedSeal))
-                {
-                    taskListTampered = true;
-
-                    HostsFileBlocker.Log(
-                        "TAMPER: tasks.json failed its seal - " +
-                        "list rejected, blocking locked until a " +
-                        "fresh plan is saved");
 
                     return;
                 }
