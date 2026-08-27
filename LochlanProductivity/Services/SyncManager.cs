@@ -16,19 +16,20 @@ namespace LochlanProductivity.Services
     // 1. The shared syncdata.json lives in a configurable folder.
     //    Auto-detection order:
     //        saved setting
-    //          > ~/Syncthing/LochlanProductivity (if it has data)
-    //          > legacy OneDrive path (if it has data)
-    //          > ~/Syncthing/LochlanProductivity (default target)
+    //          > Syncthing config.xml folders (first is
+    //            ~/LochlanProductivityData)
+    //          > ~/Syncthing/LochlanProductivity (legacy)
+    //          > OneDrive/LochlanProductivity (legacy)
     //
     // 2. All writes are atomic (.tmp + File.Move) so the sync tool
     //    never propagates a half-written JSON file to the other
     //    computer.
     //
     // 3. Sync Now performs a two-way merge keyed on Id with
-    //    LastModified (newest wins per item). Known limitation:
-    //    there are no deletion tombstones yet, so an item deleted
-    //    on one computer can be resurrected from a stale snapshot
-    //    on the other until both have synced once.
+    //    LastModified (newest wins per item). Deletions use
+    //    soft-delete tombstones (TodoTask.IsDeleted) kept 30 days
+    //    so they propagate; raw tasks.json Syncthing conflicts
+    //    (tasks.sync-conflict*.json) are merged on next load.
     // ============================================================
 
     public class SyncManager
