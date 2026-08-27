@@ -153,6 +153,11 @@ namespace LochlanProductivity
 
         private async System.Threading.Tasks.Task InitializeAsync()
         {
+            // Ensure the app launches at Windows startup (required
+            // once-per-day daily prompt cannot work if the app never
+            // opens). Best-effort; respects DisabledByPolicy.
+            await EnsureStartupEnabledAsync();
+
             // Load groups first because tasks can reference groups.
             await LoadAppGroupsAsync();
 
@@ -173,6 +178,11 @@ namespace LochlanProductivity
             UpdateBlockingStatus();
 
             await SyncOnStartupAsync();
+
+            // Daily prompt is required once per calendar day before
+            // any other action is unlocked (see HasIncompleteTasks).
+            // Re-evaluate lock after sync in case remote state changed.
+            UpdateFocusModeLock();
 
             await CheckDailyPromptAsync();
 
@@ -260,7 +270,14 @@ namespace LochlanProductivity
         private IEnumerable<TodoTask> ActiveTasks =>
             tasks.Where(task => !task.IsDeleted);
 
+        // Daily plan is required once per calendar day. Until the
+        // user adds today's task, focus stays locked even if there
+        // are no incomplete tasks (prevents bypass by skipping).
+        private bool IsDailyPlanMissing =>
+            dailyPromptManager.ShouldShowPrompt();
+
         private bool HasIncompleteTasks =>
+            IsDailyPlanMissing ||
             ActiveTasks.Any(task => !task.IsCompleted);
 
         private bool IsFocusModeLocked =>
@@ -279,7 +296,9 @@ namespace LochlanProductivity
                     "Focus Mode Locked";
 
                 BlockingStatusText.Text =
-                    "Focus Mode is locked until all tasks are complete.";
+                    IsDailyPlanMissing
+                        ? "Add today's task to unlock Focus Mode."
+                        : "Focus Mode is locked until all tasks are complete.";
 
                 return;
             }
@@ -301,21 +320,19 @@ namespace LochlanProductivity
 
         private async System.Threading.Tasks.Task CheckDailyPromptAsync()
         {
-            // If there are already unfinished tasks, don't ask the user
-            // to create another daily task list.
-            //
-            // This is especially important after restarting the app:
-            // saved tasks should simply reappear.
-            if (ActiveTasks.Any(task => !task.IsCompleted))
-            {
-                return;
-            }
-
-            // If today's prompt was already shown, don't show it again.
+            // Required once per calendar day, every day, regardless
+            // of leftover incomplete tasks. Until the user adds
+            // today's task, IsDailyPlanMissing keeps focus locked
+            // and SyncNow still works but blocking cannot be bypassed.
             if (!dailyPromptManager.ShouldShowPrompt())
             {
                 return;
             }
+
+            // Ensure the window is visible and blocking is engaged
+            // while the daily plan is missing.
+            ShowMainWindow();
+            UpdateFocusModeLock();
 
             while (true)
             {
@@ -354,9 +371,8 @@ namespace LochlanProductivity
                     new TextBlock
                     {
                         Text =
-                            "Before you get started, " +
-                            "add at least one thing you " +
-                            "need to accomplish today.",
+                            "Focus is locked until you add at least " +
+                            "one task for today.",
 
                         TextWrapping =
                             TextWrapping.Wrap,
@@ -370,16 +386,17 @@ namespace LochlanProductivity
                     new ContentDialog
                     {
                         Title =
-                            "Plan Your Day",
+                            "Plan Your Day — Required",
 
                         Content = dialogContent,
 
                         PrimaryButtonText =
                             "Add Task",
 
-                        SecondaryButtonText =
-                            "Skip for today",
-
+                        // No Skip. Closing/Cancel just re-prompts;
+                        // the task is required before other actions
+                        // are unlocked. The window is forced visible
+                        // above so it cannot be hidden behind the tray.
                         CloseButtonText =
                             "Cancel",
 
@@ -390,17 +407,11 @@ namespace LochlanProductivity
                 ContentDialogResult result =
                     await dialog.ShowAsync();
 
-                if (result == ContentDialogResult.Secondary)
-                {
-                    // Skipping is allowed but resets the streak and,
-                    // with no tasks, blocking stays off.
-                    dailyPromptManager.SkipToday();
-
-                    break;
-                }
-
                 if (result != ContentDialogResult.Primary)
                 {
+                    // Cancel/Close/Esc just loops — add a task is
+                    // mandatory. Re-ensure the window is visible.
+                    ShowMainWindow();
                     continue;
                 }
 
@@ -409,12 +420,15 @@ namespace LochlanProductivity
 
                 if (string.IsNullOrWhiteSpace(text))
                 {
+                    ShowMainWindow();
                     continue;
                 }
 
                 await AddTaskForDailyPromptAsync(text);
 
                 dailyPromptManager.MarkPromptShown();
+
+                UpdateFocusModeLock();
 
                 break;
             }
@@ -5623,6 +5637,23 @@ namespace LochlanProductivity
         // ============================================================
         // START WITH WINDOWS
         // ============================================================
+
+        private async System.Threading.Tasks.Task EnsureStartupEnabledAsync()
+        {
+            try
+            {
+                StartupState state =
+                    await startupManager.GetStateAsync();
+
+                if (state == StartupState.Disabled)
+                {
+                    await startupManager.SetEnabledAsync(true);
+                }
+            }
+            catch
+            {
+            }
+        }
 
         private async System.Threading.Tasks.Task
             UpdateStartupToggleButtonAsync()
