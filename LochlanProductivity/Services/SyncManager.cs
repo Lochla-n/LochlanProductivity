@@ -79,12 +79,51 @@ namespace LochlanProductivity.Services
 
         public void SetSyncFolder(string folder)
         {
+            string? previousFolder =
+                string.IsNullOrWhiteSpace(configuredSyncFolder)
+                    ? null
+                    : configuredSyncFolder;
+
+            // Remember where the file currently lives before changing.
+            string? previousFile = null;
+
+            if (previousFolder == null)
+            {
+                // No explicit config: file is in the resolved folder.
+                try { previousFile = SyncFilePath; } catch { }
+            }
+            else
+            {
+                previousFile =
+                    Path.Combine(previousFolder, "syncdata.json");
+            }
+
             configuredSyncFolder =
                 string.IsNullOrWhiteSpace(folder)
                     ? null
                     : folder.Trim();
 
             SaveConfig();
+
+            // If the new folder has no file but the old one did,
+            // copy it so no data is lost on a folder change.
+            try
+            {
+                string newFile = SyncFilePath;
+
+                if (!File.Exists(newFile) &&
+                    previousFile != null &&
+                    File.Exists(previousFile))
+                {
+                    Directory.CreateDirectory(
+                        Path.GetDirectoryName(newFile)!);
+
+                    File.Copy(previousFile, newFile);
+                }
+            }
+            catch
+            {
+            }
         }
 
         private string ResolveSyncFolder()
@@ -92,6 +131,30 @@ namespace LochlanProductivity.Services
             if (!string.IsNullOrWhiteSpace(configuredSyncFolder))
             {
                 return configuredSyncFolder!;
+            }
+
+            List<string> syncthingFolders =
+                GetSyncthingFolderCandidates();
+
+            // Prefer a Syncthing folder that already has data.
+            foreach (string folder in syncthingFolders)
+            {
+                if (File.Exists(Path.Combine(folder, "syncdata.json")))
+                {
+                    return folder;
+                }
+            }
+
+            // No Syncthing folder has data yet: use the first
+            // Syncthing folder so the shared file actually syncs.
+            // If the legacy OneDrive file exists, migrate it.
+            if (syncthingFolders.Count > 0)
+            {
+                string target = syncthingFolders[0];
+
+                TryMigrateLegacySyncData(target);
+
+                return target;
             }
 
             if (File.Exists(
@@ -107,6 +170,113 @@ namespace LochlanProductivity.Services
             }
 
             return syncthingFolder;
+        }
+
+        private void TryMigrateLegacySyncData(string targetFolder)
+        {
+            try
+            {
+                string targetFile =
+                    Path.Combine(targetFolder, "syncdata.json");
+
+                if (File.Exists(targetFile))
+                    return;
+
+                string legacyFile =
+                    Path.Combine(legacyOneDriveFolder, "syncdata.json");
+
+                if (!File.Exists(legacyFile))
+                    return;
+
+                Directory.CreateDirectory(targetFolder);
+
+                File.Copy(legacyFile, targetFile);
+            }
+            catch
+            {
+            }
+        }
+
+        private List<string> GetSyncthingFolderCandidates()
+        {
+            List<string> candidates = new();
+
+            foreach (string configPath in new[]
+            {
+                Path.Combine(
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.LocalApplicationData),
+                    "Syncthing",
+                    "config.xml"),
+
+                Path.Combine(
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.ApplicationData),
+                    "Syncthing",
+                    "config.xml")
+            })
+            {
+                try
+                {
+                    if (!File.Exists(configPath))
+                        continue;
+
+                    string xml =
+                        File.ReadAllText(configPath);
+
+                    int searchFrom = 0;
+
+                    while (true)
+                    {
+                        int folderIndex =
+                            xml.IndexOf(
+                                "<folder ",
+                                searchFrom,
+                                StringComparison.OrdinalIgnoreCase);
+
+                        if (folderIndex < 0)
+                            break;
+
+                        int pathIndex =
+                            xml.IndexOf(
+                                "path=\"",
+                                folderIndex,
+                                StringComparison.OrdinalIgnoreCase);
+
+                        if (pathIndex < 0)
+                        {
+                            searchFrom = folderIndex + 8;
+                            continue;
+                        }
+
+                        int valueStart = pathIndex + 6;
+
+                        int valueEnd =
+                            xml.IndexOf('"', valueStart);
+
+                        if (valueEnd < 0)
+                            break;
+
+                        string folderPath =
+                            xml.Substring(valueStart, valueEnd - valueStart);
+
+                        if (!string.IsNullOrWhiteSpace(folderPath) &&
+                            !candidates.Contains(
+                                folderPath,
+                                StringComparer.OrdinalIgnoreCase))
+                        {
+                            candidates.Add(folderPath);
+                        }
+
+                        searchFrom = valueEnd + 1;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return candidates;
         }
 
         // ============================================================
@@ -414,7 +584,18 @@ namespace LochlanProductivity.Services
 
                 if (incomingTask.LastModified > existing.LastModified)
                 {
+                    // Strictness: a remote completion must not unlock
+                    // this machine while local work is still pending.
+                    // Preserve local "incomplete" over remote "complete".
+                    bool localIncomplete = !existing.IsCompleted;
+
                     CopyTaskInto(existing, incomingTask);
+
+                    if (localIncomplete &&
+                        existing.IsCompleted)
+                    {
+                        existing.IsCompleted = false;
+                    }
 
                     changes++;
                 }

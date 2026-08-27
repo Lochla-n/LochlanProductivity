@@ -212,13 +212,15 @@ namespace LochlanProductivity
         {
             try
             {
-                // Same strictness as manual Sync Now: a merge while
-                // enforcing could import a remote completion and
-                // unlock this computer.
                 if (taskListTampered ||
-                    HasIncompleteTasks ||
                     !syncManager.HasSyncData())
                     return;
+
+                // Startup sync is allowed even while focus is
+                // enforcing: MergeTasks preserves a local incomplete
+                // over a remote completion, so the other computer
+                // cannot unlock this one. New tasks and edits still
+                // flow in both directions.
 
                 SyncResult result =
                     await syncManager.SyncNowAsync(
@@ -4950,17 +4952,19 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
-            // Consistent with every other setting: no sync while
-            // focus is enforcing. Otherwise a completion pushed from
-            // the other computer could unlock this one.
-            if (HasIncompleteTasks || taskListTampered)
+            if (taskListTampered)
             {
                 await ShowSimpleMessageAsync(
-                    "Sync is locked while tasks are incomplete.\n\n" +
-                    "Complete all tasks before syncing.");
+                    "Sync is locked: your local task list failed " +
+                    "its tamper check. Save a fresh plan first.");
 
                 return;
             }
+
+            // While focus is enforcing, completions from the other
+            // computer do not unlock tasks here (MergeTasks preserves
+            // local incomplete). New tasks and edits still sync, so
+            // it is safe to allow Sync Now at any time.
 
             SyncResult result =
                 await syncManager.SyncNowAsync(
@@ -4995,6 +4999,186 @@ namespace LochlanProductivity
                 result.Success
                     ? $"Sync complete.\n\n{result.Message}"
                     : $"Sync failed.\n\n{result.Message}");
+        }
+
+        private async void SyncFolderButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            StackPanel panel =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            string currentFolder = syncManager.SyncFolder;
+
+            bool isSyncthingFolder =
+                IsSyncthingFolder(currentFolder);
+
+            panel.Children.Add(
+                new TextBlock
+                {
+                    Text = isSyncthingFolder
+                        ? "This folder is shared via Syncthing."
+                        : "This folder is NOT shared via Syncthing. " +
+                          "Pick the folder that Syncthing syncs to fix sync.",
+
+                    TextWrapping = TextWrapping.Wrap,
+
+                    Opacity = 0.75,
+
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            isSyncthingFolder
+                                ? Microsoft.UI.Colors.Green
+                                : Microsoft.UI.Colors.OrangeRed)
+                });
+
+            panel.Children.Add(
+                new TextBlock
+                {
+                    Text = $"Current sync folder:\n{currentFolder}",
+
+                    TextWrapping = TextWrapping.Wrap,
+
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+
+                    FontSize = 12,
+
+                    Opacity = 0.9
+                });
+
+            string syncFile =
+                Path.Combine(currentFolder, "syncdata.json");
+
+            if (File.Exists(syncFile))
+            {
+                FileInfo info = new FileInfo(syncFile);
+
+                panel.Children.Add(
+                    new TextBlock
+                    {
+                        Text =
+                            $"Shared file: {info.Length} bytes, " +
+                            $"modified {info.LastWriteTime:g}",
+
+                        FontSize = 12,
+
+                        Opacity = 0.65
+                    });
+            }
+            else
+            {
+                panel.Children.Add(
+                    new TextBlock
+                    {
+                        Text = "No shared file yet. It will be " +
+                               "created on the next Sync Now.",
+
+                        FontSize = 12,
+
+                        Opacity = 0.65
+                    });
+            }
+
+            Button changeButton =
+                new Button
+                {
+                    Content = "Change Sync Folder...",
+
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+
+            panel.Children.Add(changeButton);
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Sync Folder",
+
+                    Content =
+                        new ScrollViewer
+                        {
+                            Content = panel,
+
+                            MaxHeight = 400,
+
+                            VerticalScrollBarVisibility =
+                                ScrollBarVisibility.Auto
+                        },
+
+                    CloseButtonText = "Close",
+
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+            bool pickedNewFolder = false;
+
+            changeButton.Click +=
+                async (s, args) =>
+                {
+                    FolderPicker picker =
+                        new FolderPicker
+                        {
+                            SuggestedStartLocation =
+                                PickerLocationId.ComputerFolder
+                        };
+
+                    picker.FileTypeFilter.Add("*");
+
+                    IntPtr hwnd =
+                        WindowNative.GetWindowHandle(this);
+
+                    InitializeWithWindow.Initialize(picker, hwnd);
+
+                    StorageFolder? folder =
+                        await picker.PickSingleFolderAsync();
+
+                    if (folder == null)
+                        return;
+
+                    syncManager.SetSyncFolder(folder.Path);
+
+                    pickedNewFolder = true;
+
+                    dialog.Hide();
+                };
+
+            await dialog.ShowAsync();
+
+            if (pickedNewFolder)
+            {
+                await ShowSimpleMessageAsync(
+                    $"Sync folder changed to:\n{syncManager.SyncFolder}\n\n" +
+                    "Make sure this same folder is added to Syncthing " +
+                    "on your other computer with the same Folder ID.");
+            }
+        }
+
+        private bool IsSyncthingFolder(string folder)
+        {
+            try
+            {
+                string configPath =
+                    Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.LocalApplicationData),
+                        "Syncthing",
+                        "config.xml");
+
+                if (!File.Exists(configPath))
+                    return false;
+
+                string xml = File.ReadAllText(configPath);
+
+                return xml.Contains(folder, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
 
@@ -5304,6 +5488,125 @@ namespace LochlanProductivity
                 //
                 // Most importantly, don't turn a loading problem
                 // into permanent data loss.
+            }
+
+            // Also merge any Syncthing conflict copies that appeared
+            // while the app was closed (raw file-level sync of the
+            // tasks folder). These are merged the same way as shared
+            // syncdata: newest LastModified per task wins, but a
+            // local incomplete is never overwritten by a remote
+            // completion.
+            await MergeRawSyncConflictsAsync();
+        }
+
+        private async System.Threading.Tasks.Task MergeRawSyncConflictsAsync()
+        {
+            try
+            {
+                if (!Directory.Exists(saveDirectory))
+                    return;
+
+                string[] conflictFiles =
+                    Directory.GetFiles(
+                        saveDirectory,
+                        "tasks*.sync-conflict*.json");
+
+                if (conflictFiles.Length == 0)
+                    return;
+
+                int totalMerged = 0;
+
+                foreach (string conflictPath in conflictFiles)
+                {
+                    try
+                    {
+                        string json =
+                            await File.ReadAllTextAsync(conflictPath);
+
+                        List<TodoTask>? conflictTasks =
+                            JsonSerializer.Deserialize<List<TodoTask>>(
+                                json,
+                                new JsonSerializerOptions
+                                {
+                                    PropertyNameCaseInsensitive = true
+                                });
+
+                        if (conflictTasks == null)
+                            continue;
+
+                        foreach (TodoTask incoming in conflictTasks)
+                        {
+                            if (incoming == null ||
+                                string.IsNullOrWhiteSpace(incoming.Id))
+                                continue;
+
+                            TodoTask? existing =
+                                tasks.FirstOrDefault(
+                                    task =>
+                                        task.Id.Equals(
+                                            incoming.Id,
+                                            StringComparison.OrdinalIgnoreCase));
+
+                            if (existing == null)
+                            {
+                                tasks.Add(incoming);
+                                totalMerged++;
+                                continue;
+                            }
+
+                            if (incoming.LastModified >
+                                existing.LastModified)
+                            {
+                                bool localIncomplete =
+                                    !existing.IsCompleted;
+
+                                existing.Title = incoming.Title;
+                                existing.IsCompleted = incoming.IsCompleted;
+                                existing.IsDeleted = incoming.IsDeleted;
+                                existing.LastModified = incoming.LastModified;
+                                existing.Priority = incoming.Priority;
+                                existing.DueTimeOfDay = incoming.DueTimeOfDay;
+                                existing.BlockedGroups =
+                                    new List<string>(incoming.BlockedGroups ?? new());
+                                existing.BlockedApps =
+                                    new List<BlockedApp>(incoming.BlockedApps ?? new());
+                                existing.IsRecurring = incoming.IsRecurring;
+                                existing.Recurrence = incoming.Recurrence;
+                                existing.RecurrenceInterval = incoming.RecurrenceInterval;
+                                existing.RecurrenceDays =
+                                    new List<DayOfWeek>(incoming.RecurrenceDays ?? new());
+                                existing.DueDate = incoming.DueDate;
+                                existing.LastCompletedDate = incoming.LastCompletedDate;
+
+                                if (localIncomplete &&
+                                    existing.IsCompleted)
+                                {
+                                    existing.IsCompleted = false;
+                                }
+
+                                totalMerged++;
+                            }
+                        }
+
+                        File.Delete(conflictPath);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (totalMerged > 0)
+                {
+                    HostsFileBlocker.Log(
+                        $"merged {totalMerged} task(s) from sync-conflict files");
+
+                    RefreshTaskList();
+
+                    await SaveTasksAsync();
+                }
+            }
+            catch
+            {
             }
         }
 

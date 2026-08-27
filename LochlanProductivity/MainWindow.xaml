@@ -73,6 +73,11 @@
                     Margin="0,10,0,10"/>
 
                 <Button
+                    Content="Sync Folder"
+                    Click="SyncFolderButton_Click"
+                    Margin="8,10,0,10"/>
+
+                <Button
                     x:Name="StartupToggleButton"
                     Content="Start with Windows"
                     Click="StartupToggle_Click"
