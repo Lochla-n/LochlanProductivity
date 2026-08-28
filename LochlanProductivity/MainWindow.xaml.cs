@@ -799,21 +799,30 @@ namespace LochlanProductivity
         {
             try
             {
-                if (IsCalendarHardBlocked)
-                {
-                    CalendarStatusText.Visibility = Visibility.Visible;
-                    CalendarStatusText.Text =
-                        $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class";
-
-                    EmergencyButton.Visibility = Visibility.Visible;
-                }
-                else if (IsYouTubeEmergencyActive)
+                if (IsYouTubeEmergencyActive)
                 {
                     CalendarStatusText.Visibility = Visibility.Visible;
                     CalendarStatusText.Text =
                         $"⚡ Emergency bypass until {calendarEmergencyUntil: t} — YouTube temporarily allowed";
 
                     EmergencyButton.Visibility = Visibility.Collapsed;
+                }
+                else if (IsFocusModeLocked)
+                {
+                    CalendarStatusText.Visibility = Visibility.Visible;
+
+                    if (IsCalendarHardBlocked)
+                    {
+                        CalendarStatusText.Text =
+                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class";
+                    }
+                    else
+                    {
+                        CalendarStatusText.Text =
+                            "YouTube blocked — use emergency to allow for tutorial";
+                    }
+
+                    EmergencyButton.Visibility = Visibility.Visible;
                 }
                 else
                 {
