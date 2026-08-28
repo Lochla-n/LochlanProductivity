@@ -799,16 +799,16 @@ namespace LochlanProductivity
         {
             try
             {
-                // EmergencyButton in the Focus card is kept collapsed
-                // by design (user asked for harder-to-see). Real trigger
-                // is ... menu → Emergency: Allow YouTube (15m).
+                // Emergency button now lives tucked in Blocked Websites
+                // settings (harder to reach) — keep the hidden compat
+                // button collapsed. Focus card only shows status text.
                 EmergencyButton.Visibility = Visibility.Collapsed;
 
                 if (IsYouTubeEmergencyActive)
                 {
                     CalendarStatusText.Visibility = Visibility.Visible;
                     CalendarStatusText.Text =
-                        $"⚡ Emergency YouTube until {calendarEmergencyUntil: t} — temporarily allowed";
+                        $"⚡ YouTube allowed until {calendarEmergencyUntil: t} (emergency)";
                 }
                 else if (IsFocusModeLocked)
                 {
@@ -817,12 +817,12 @@ namespace LochlanProductivity
                     if (IsCalendarHardBlocked)
                     {
                         CalendarStatusText.Text =
-                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class (… → Emergency)";
+                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class";
                     }
                     else
                     {
                         CalendarStatusText.Text =
-                            "YouTube blocked — … → Emergency: Allow YouTube (15m) for tutorial";
+                            "YouTube blocked — emergency is in Blocked Websites → bottom";
                     }
                 }
                 else
@@ -3331,6 +3331,61 @@ namespace LochlanProductivity
 
                     TextWrapping = TextWrapping.Wrap
                 });
+
+            // Harder-to-see emergency bypass — tucked at the very bottom
+            // so it's not tempting during normal focus, but reachable
+            // for a class tutorial.
+            panel.Children.Add(new Border
+            {
+                Margin = new Thickness(0, 18, 0, 0),
+                BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(0, 12, 0, 0),
+                Child = new StackPanel
+                {
+                    Spacing = 6,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "Need YouTube for class?",
+                            FontSize = 11,
+                            Opacity = 0.5,
+                            FontStyle = Windows.UI.Text.FontStyle.Italic
+                        },
+                        new Button
+                        {
+                            Content = "Emergency: Allow YouTube for 15 minutes",
+                            FontSize = 11,
+                            Opacity = 0.72,
+                            Padding = new Thickness(10, 4, 10, 4),
+                            CornerRadius = new CornerRadius(6),
+                            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 248, 240, 232)),
+                            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)),
+                            BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 232, 207, 207)),
+                            BorderThickness = new Thickness(1),
+                            Tag = "emergency"
+                        }
+                    }
+                }
+            });
+
+            // Wire the tucked button after creation.
+            var emergencyContainer = (Border)panel.Children[panel.Children.Count - 1];
+            var emergencyStack = (StackPanel)emergencyContainer.Child;
+            var emergencyBtn = (Button)emergencyStack.Children[1];
+            emergencyBtn.Click += (s, e) =>
+            {
+                // Reuse the same 15m emergency logic.
+                EmergencyButton_Click(s, e);
+                emergencyBtn.Content = "Allowed until " + (calendarEmergencyUntil?.ToString("t") ?? "15m") + " — close this dialog";
+                emergencyBtn.IsEnabled = false;
+                emergencyBtn.Opacity = 0.45;
+            };
 
             await dialog.ShowAsync();
         }
