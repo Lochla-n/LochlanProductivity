@@ -1821,9 +1821,10 @@ namespace LochlanProductivity
                 Border card =
                     new Border
                     {
+                        // Semi-transparent frost glass — lets Mica show through
                         Background =
                             new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 250, 251, 249)),
+                                Microsoft.UI.ColorHelper.FromArgb(204, 250, 251, 249)),
                         BorderBrush =
                             new Microsoft.UI.Xaml.Media.SolidColorBrush(
                                 Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
@@ -1893,6 +1894,13 @@ namespace LochlanProductivity
 
                         FontSize = 16,
 
+                        FontFamily =
+                            new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 58, 46, 40)),
+
                         TextWrapping =
                             TextWrapping.Wrap
                     };
@@ -1907,7 +1915,14 @@ namespace LochlanProductivity
 
                         FontSize = 12,
 
-                        Opacity = 0.7,
+                        FontFamily =
+                            new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI Variable Text"),
+
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 107, 94, 82)),
+
+                        Opacity = 0.9,
 
                         TextWrapping =
                             TextWrapping.Wrap,

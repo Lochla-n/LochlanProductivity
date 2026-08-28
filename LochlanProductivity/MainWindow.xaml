@@ -11,10 +11,10 @@
     Title="LochlanProductivity">
 
     <Window.SystemBackdrop>
-        <MicaBackdrop />
+        <MicaBackdrop Kind="BaseAlt"/>
     </Window.SystemBackdrop>
 
-    <Grid Background="#FFF2F3F0" Padding="28">
+    <Grid Background="#99F2F3F0" Padding="28">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -31,15 +31,15 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Text="Today's Tasks" FontSize="28" FontWeight="SemiBold" Foreground="#FF2E3440"/>
-                <TextBlock Text="Complete your tasks to unlock — focus stays frost-clean until done." FontSize="12" Foreground="#FF5A6460" Opacity="0.9"/>
+                <TextBlock Text="Today's Tasks" FontSize="30" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
+                <TextBlock Text="Complete your tasks to unlock — focus stays frost-clean until done." FontSize="12.5" FontFamily="Segoe UI Variable Text" Foreground="#FF6B5E52" Opacity="0.95"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <Ellipse x:Name="SyncStatusDot" Width="8" Height="8" Fill="#FF8A9A8B" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" Foreground="#FF5A6460" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" FontFamily="Segoe UI Variable Small" Foreground="#FF6B5E52" VerticalAlignment="Center"/>
                 </StackPanel>
-                <Button Content="..." FontSize="16" Padding="10,4" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF2E3440" CornerRadius="8">
+                <Button Content="..." FontSize="16" Padding="10,4" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF3A2E28" CornerRadius="8">
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="App Groups" Click="ManageAppGroups_Click"/>
@@ -57,8 +57,8 @@
             </StackPanel>
         </Grid>
 
-        <!-- FOCUS CARD -->
-        <Border Grid.Row="1" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="14" Padding="16">
+        <!-- FOCUS CARD — frost glass (semi-transparent over Mica) -->
+        <Border Grid.Row="1" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="14" Padding="16">
             <Border BorderBrush="#FF8E7D6B" BorderThickness="4,0,0,0" CornerRadius="8" Padding="12,2,0,2">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -66,8 +66,8 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Spacing="2">
-                        <TextBlock x:Name="BlockingStatusText" Text="Focus Mode is OFF" FontSize="15" FontWeight="SemiBold" Foreground="#FF2E3440"/>
-                        <TextBlock x:Name="BlockedAppStatusText" Text="No apps are currently being monitored." FontSize="12" Foreground="#FF5A6460"/>
+                        <TextBlock x:Name="BlockingStatusText" Text="Focus Mode is OFF" FontSize="15" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
+                        <TextBlock x:Name="BlockedAppStatusText" Text="No apps are currently being monitored." FontSize="12" FontFamily="Segoe UI Variable Text" Foreground="#FF6B5E52"/>
                     </StackPanel>
                     <Button x:Name="BlockingButton" Grid.Column="1" Content="Start Focus Mode" Click="BlockingButton_Click" Padding="18,8" Margin="16,0,0,0" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8"/>
                 </Grid>
@@ -82,8 +82,8 @@
             </StackPanel>
         </Border>
 
-        <!-- TASK INPUT -->
-        <Border Grid.Row="3" Margin="0,14,0,14" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
+        <!-- TASK INPUT — frost glass -->
+        <Border Grid.Row="3" Margin="0,14,0,14" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
