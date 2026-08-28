@@ -10,205 +10,93 @@
     mc:Ignorable="d"
     Title="LochlanProductivity">
 
-    <!-- Git sync test -->
-
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid Padding="32">
+    <Grid Background="#FFF2F3F0" Padding="28">
 
         <Grid.RowDefinitions>
-
-            <!-- Header -->
             <RowDefinition Height="Auto"/>
-
-            <!-- Focus mode -->
             <RowDefinition Height="Auto"/>
-
-            <!-- Notification -->
             <RowDefinition Height="Auto"/>
-
-            <!-- Task input -->
             <RowDefinition Height="Auto"/>
-
-            <!-- Task list -->
             <RowDefinition Height="*"/>
-
         </Grid.RowDefinitions>
 
-
-        <!-- ===================================================== -->
-        <!-- HEADER -->
-        <!-- ===================================================== -->
-
-        <StackPanel Grid.Row="0">
-
-            <TextBlock
-                Text="Today's Tasks"
-                FontSize="32"
-                FontWeight="SemiBold"/>
-
-            <StackPanel
-                Orientation="Horizontal"
-                Spacing="8"
-                Margin="0,8,0,8">
-
-                <Button
-                    Content="Manage App Groups"
-                    Click="ManageAppGroups_Click"/>
-
-                <Button
-                    Content="Scheduled Blocking"
-                    Click="ManageSchedules_Click"/>
-
-                <Button Content="Scheduled Tasks"
-                     Click="ScheduledTasks_Click"
-                     Margin="8,0,0,0" />
-
-                <Button
-                    Content="Sync Now"
-                    Click="SyncNowButton_Click"
-                    HorizontalAlignment="Left"
-                    Margin="0,10,0,10"/>
-
-                <Button
-                    Content="Sync Folder"
-                    Click="SyncFolderButton_Click"
-                    Margin="8,10,0,10"/>
-
-                <Button
-                    x:Name="StartupToggleButton"
-                    Content="Start with Windows"
-                    Click="StartupToggle_Click"
-                    Margin="8,10,0,10"/>
-
-                <Button
-                    Content="Blocked Websites"
-                    Click="BlockedSitesButton_Click"
-                    Margin="8,10,0,10"/>
-
-            </StackPanel>
-
-            <TextBlock
-                Text="Complete your tasks to unlock your blocked apps."
-                Margin="0,6,0,0"
-                Opacity="0.7"/>
-
-        </StackPanel>
-
-
-        <!-- ===================================================== -->
-        <!-- FOCUS MODE -->
-        <!-- ===================================================== -->
-
-        <Grid
-            Grid.Row="1"
-            Margin="0,20,0,0">
-
+        <!-- HEADER — minimal -->
+        <Grid Grid.Row="0" Margin="0,0,0,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-
-            <StackPanel>
-
-                <TextBlock
-                    x:Name="BlockingStatusText"
-                    Text="Focus Mode is OFF"
-                    FontSize="16"
-                    FontWeight="SemiBold"/>
-
-                <TextBlock
-                    x:Name="BlockedAppStatusText"
-                    Text="No apps are currently being monitored."
-                    Margin="0,4,0,0"
-                    Opacity="0.7"/>
-
+            <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Text="Today's Tasks" FontSize="28" FontWeight="SemiBold" Foreground="#FF2E3440"/>
+                <TextBlock Text="Complete your tasks to unlock — focus stays frost-clean until done." FontSize="12" Foreground="#FF5A6460" Opacity="0.9"/>
             </StackPanel>
-
-            <Button
-                x:Name="BlockingButton"
-                Grid.Column="1"
-                Content="Start Focus Mode"
-                Click="BlockingButton_Click"
-                Padding="18,8"
-                Margin="16,0,0,0"/>
-
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Ellipse x:Name="SyncStatusDot" Width="8" Height="8" Fill="#FF8A9A8B" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" Foreground="#FF5A6460" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button Content="..." FontSize="16" Padding="10,4" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF2E3440" CornerRadius="8">
+                    <Button.Flyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem Text="App Groups" Click="ManageAppGroups_Click"/>
+                            <MenuFlyoutItem Text="Scheduled Blocking" Click="ManageSchedules_Click"/>
+                            <MenuFlyoutItem Text="Scheduled Tasks" Click="ScheduledTasks_Click"/>
+                            <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="Blocked Websites" Click="BlockedSitesButton_Click"/>
+                            <MenuFlyoutItem Text="Sync Folder" Click="SyncFolderButton_Click"/>
+                            <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="Start with Windows" Click="StartupToggle_Click"/>
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+                <Button x:Name="StartupToggleButton" Visibility="Collapsed" Click="StartupToggle_Click"/>
+            </StackPanel>
         </Grid>
 
-
-        <!-- ===================================================== -->
-        <!-- BLOCKED APP NOTIFICATION -->
-        <!-- ===================================================== -->
-
-        <Border
-            x:Name="BlockedAppNotification"
-            Grid.Row="2"
-            Margin="0,16,0,0"
-            Padding="14"
-            CornerRadius="8"
-            Visibility="Collapsed">
-
-            <StackPanel>
-
-                <TextBlock
-                    x:Name="BlockedAppNotificationTitle"
-                    FontSize="16"
-                    FontWeight="SemiBold"/>
-
-                <TextBlock
-                    x:Name="BlockedAppNotificationMessage"
-                    Margin="0,4,0,0"
-                    TextWrapping="Wrap"
-                    Opacity="0.8"/>
-
-            </StackPanel>
-
+        <!-- FOCUS CARD -->
+        <Border Grid.Row="1" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="14" Padding="16">
+            <Border BorderBrush="#FF8E7D6B" BorderThickness="4,0,0,0" CornerRadius="8" Padding="12,2,0,2">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="2">
+                        <TextBlock x:Name="BlockingStatusText" Text="Focus Mode is OFF" FontSize="15" FontWeight="SemiBold" Foreground="#FF2E3440"/>
+                        <TextBlock x:Name="BlockedAppStatusText" Text="No apps are currently being monitored." FontSize="12" Foreground="#FF5A6460"/>
+                    </StackPanel>
+                    <Button x:Name="BlockingButton" Grid.Column="1" Content="Start Focus Mode" Click="BlockingButton_Click" Padding="18,8" Margin="16,0,0,0" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8"/>
+                </Grid>
+            </Border>
         </Border>
 
+        <!-- NOTIFICATION -->
+        <Border x:Name="BlockedAppNotification" Grid.Row="2" Margin="0,12,0,0" Padding="14" CornerRadius="12" Background="#FFF8F0F0" BorderBrush="#FFE8CFCF" BorderThickness="1" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="BlockedAppNotificationTitle" FontSize="14" FontWeight="SemiBold" Foreground="#FF2E3440"/>
+                <TextBlock x:Name="BlockedAppNotificationMessage" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#FF5A6460" FontSize="12"/>
+            </StackPanel>
+        </Border>
 
-        <!-- ===================================================== -->
         <!-- TASK INPUT -->
-        <!-- ===================================================== -->
+        <Border Grid.Row="3" Margin="0,14,0,14" Background="#FFFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TaskInput" Grid.Column="0" PlaceholderText="What do you need to do?" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="TaskInput_KeyDown"/>
+                <Button Grid.Column="1" Content="Add" Margin="10,0,0,0" Click="AddTask_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="16,6"/>
+            </Grid>
+        </Border>
 
-        <Grid
-            Grid.Row="3"
-            Margin="0,16,0,20">
-
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <TextBox
-                x:Name="TaskInput"
-                Grid.Column="0"
-                PlaceholderText="What do you need to do?"
-                KeyDown="TaskInput_KeyDown"/>
-
-            <Button
-                Grid.Column="1"
-                Content="Add Task"
-                Margin="10,0,0,0"
-                Click="AddTask_Click"/>
-
-        </Grid>
-
-
-        <!-- ===================================================== -->
         <!-- TASK LIST -->
-        <!-- ===================================================== -->
-
-        <ScrollViewer
-            Grid.Row="4"
-            VerticalScrollBarVisibility="Auto"
-            HorizontalScrollBarVisibility="Disabled">
-
-            <StackPanel
-                x:Name="TaskList"
-                Spacing="8"/>
-
+        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="TaskList" Spacing="10"/>
         </ScrollViewer>
 
     </Grid>

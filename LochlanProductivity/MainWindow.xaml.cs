@@ -57,6 +57,21 @@ namespace LochlanProductivity
         private TrayIconManager? trayIconManager;
 
         // ============================================================
+        // AUTO-SYNC (push on edit + pull on remote file change)
+        // ============================================================
+
+        private DispatcherTimer? autoSyncPushTimer;
+
+        private DispatcherTimer? autoSyncPullTimer;
+
+        private FileSystemWatcher? syncFileWatcher;
+
+        private bool isAutoSyncInProgress;
+
+        private DateTime lastAutoPushUtc =
+            DateTime.MinValue;
+
+        // ============================================================
         // TASKS
         // ============================================================
 
@@ -187,6 +202,8 @@ namespace LochlanProductivity
             await CheckDailyPromptAsync();
 
             await UpdateStartupToggleButtonAsync();
+
+            SetupAutoSync();
         }
 
         private async System.Threading.Tasks.Task
@@ -201,6 +218,415 @@ namespace LochlanProductivity
                 System.Diagnostics.Debug.WriteLine(
                     $"Failed to persist reactivated tasks: {ex}");
             }
+        }
+
+        // ============================================================
+        // AUTO-SYNC (push on edit + pull on remote file change)
+        // ============================================================
+
+        private bool suppressAutoSyncPush;
+
+        private void SetupAutoSync()
+        {
+            try
+            {
+                // Debounced push: coalesce rapid edits into one sync.
+                autoSyncPushTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(1.8)
+                };
+
+                autoSyncPushTimer.Tick +=
+                    async (s, e) =>
+                    {
+                        autoSyncPushTimer!.Stop();
+                        await DoAutoSyncAsync();
+                    };
+
+                // Debounced pull: remote syncdata.json changed.
+                autoSyncPullTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(900)
+                };
+
+                autoSyncPullTimer.Tick +=
+                    async (s, e) =>
+                    {
+                        autoSyncPullTimer!.Stop();
+                        await HandleRemoteSyncFileChangedAsync();
+                    };
+
+                string folder = syncManager.SyncFolder;
+                string fileName = Path.GetFileName(syncManager.SyncFilePath);
+
+                Directory.CreateDirectory(folder);
+
+                syncFileWatcher = new FileSystemWatcher(folder, fileName)
+                {
+                    NotifyFilter =
+                        NotifyFilters.LastWrite |
+                        NotifyFilters.FileName |
+                        NotifyFilters.Size,
+
+                    EnableRaisingEvents = true
+                };
+
+                syncFileWatcher.Changed += OnSyncFileChanged;
+                syncFileWatcher.Created += OnSyncFileChanged;
+                syncFileWatcher.Renamed += OnSyncFileChanged;
+
+                // Local file watchers: any edit to tasks/groups/schedules/
+                // blocked sites/daily prompt coalesces into a push.
+                try
+                {
+                    string localData = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "LochlanProductivity");
+
+                    Directory.CreateDirectory(localData);
+
+                    var localWatcher = new FileSystemWatcher(localData, "*.json")
+                    {
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                        EnableRaisingEvents = true
+                    };
+
+                    FileSystemEventHandler onLocal = (s, e) =>
+                    {
+                        if (suppressAutoSyncPush) return;
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            autoSyncPushTimer?.Stop();
+                            autoSyncPushTimer?.Start();
+                        });
+                    };
+
+                    localWatcher.Changed += onLocal;
+                    localWatcher.Created += onLocal;
+
+                    var saveWatcher = new FileSystemWatcher(saveDirectory, "*.json")
+                    {
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                        EnableRaisingEvents = true
+                    };
+
+                    saveWatcher.Changed += (s, e) =>
+                    {
+                        if (e.Name != null &&
+                            e.Name.Equals("syncdata.json", StringComparison.OrdinalIgnoreCase))
+                            return;
+                        if (suppressAutoSyncPush) return;
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            autoSyncPushTimer?.Stop();
+                            autoSyncPushTimer?.Start();
+                        });
+                    };
+                    saveWatcher.Created += (s, e) =>
+                    {
+                        if (suppressAutoSyncPush) return;
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            autoSyncPushTimer?.Stop();
+                            autoSyncPushTimer?.Start();
+                        });
+                    };
+                }
+                catch { }
+
+                HostsFileBlocker.Log($"auto-sync watcher on {folder}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"auto-sync setup failed: {ex}");
+            }
+        }
+
+        private void QueueAutoSync()
+        {
+            if (suppressAutoSyncPush)
+                return;
+
+            try
+            {
+                autoSyncPushTimer?.Stop();
+                autoSyncPushTimer?.Start();
+            }
+            catch
+            {
+            }
+        }
+
+        private void OnSyncFileChanged(object sender, FileSystemEventArgs e)
+        {
+            try
+            {
+                // Ignore our own just-pushed file for a moment.
+                if ((DateTime.UtcNow - lastAutoPushUtc).TotalSeconds < 3)
+                    return;
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    autoSyncPullTimer?.Stop();
+                    autoSyncPullTimer?.Start();
+                });
+            }
+            catch
+            {
+            }
+        }
+
+        private async System.Threading.Tasks.Task DoAutoSyncAsync()
+        {
+            if (isAutoSyncInProgress)
+            {
+                // Coalesce: re-queue.
+                QueueAutoSync();
+                return;
+            }
+
+            isAutoSyncInProgress = true;
+            SetSyncStatus("Syncing…", true);
+
+            try
+            {
+                SyncResult result =
+                    await syncManager.SyncNowAsync(
+                        tasks,
+                        groupManager,
+                        scheduleManager,
+                        blockedSiteStore,
+                        dailyPromptManager.LastPromptDate);
+
+                if (result.DailyPromptChanged)
+                {
+                    dailyPromptManager.ApplySyncedDate(
+                        result.MergedDailyPromptDate);
+                }
+
+                bool hadChanges =
+                    result.TaskChanges > 0 ||
+                    result.GroupChanges > 0 ||
+                    result.ScheduleChanges > 0 ||
+                    result.SiteChanges > 0 ||
+                    result.DailyPromptChanged;
+
+                if (result.Success && hadChanges)
+                {
+                    suppressAutoSyncPush = true;
+
+                    try
+                    {
+                        // Persist any tasks/groups that were merged
+                        // without re-queuing a push.
+                        await SaveTasksAsync();
+                        RefreshTaskList();
+                        UpdateFocusModeLock();
+                        UpdateScheduledBlockingState();
+
+                        if (result.SiteChanges > 0)
+                            websiteBlocksApplied = null;
+
+                        UpdateWebsiteBlockingState();
+                        UpdateBlockingStatus();
+                        EnforceBlocking();
+                    }
+                    finally
+                    {
+                        suppressAutoSyncPush = false;
+                    }
+                }
+
+                if (result.Success)
+                {
+                    lastAutoPushUtc = DateTime.UtcNow;
+                    _ = TriggerSyncthingScanAsync();
+                    SetSyncStatus("Synced ✓", false);
+                }
+                else
+                {
+                    SetSyncStatus("Sync error", false);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"auto-push failed: {ex}");
+                SetSyncStatus("Sync error", false);
+            }
+            finally
+            {
+                isAutoSyncInProgress = false;
+            }
+        }
+
+        private async System.Threading.Tasks.Task HandleRemoteSyncFileChangedAsync()
+        {
+            if (isAutoSyncInProgress)
+                return;
+
+            isAutoSyncInProgress = true;
+            SetSyncStatus("Syncing…", true);
+
+            try
+            {
+                // Tiny delay to let Syncthing finish the write.
+                await System.Threading.Tasks.Task.Delay(350);
+
+                SyncResult result =
+                    await syncManager.SyncNowAsync(
+                        tasks,
+                        groupManager,
+                        scheduleManager,
+                        blockedSiteStore,
+                        dailyPromptManager.LastPromptDate);
+
+                if (result.DailyPromptChanged)
+                {
+                    dailyPromptManager.ApplySyncedDate(
+                        result.MergedDailyPromptDate);
+                }
+
+                bool hadChanges =
+                    result.TaskChanges > 0 ||
+                    result.GroupChanges > 0 ||
+                    result.ScheduleChanges > 0 ||
+                    result.SiteChanges > 0 ||
+                    result.DailyPromptChanged;
+
+                if (result.Success && hadChanges)
+                {
+                    suppressAutoSyncPush = true;
+
+                    try
+                    {
+                        await SaveTasksAsync();
+                        RefreshTaskList();
+                        UpdateFocusModeLock();
+                        UpdateScheduledBlockingState();
+
+                        if (result.SiteChanges > 0)
+                            websiteBlocksApplied = null;
+
+                        UpdateWebsiteBlockingState();
+                        UpdateBlockingStatus();
+                        EnforceBlocking();
+                    }
+                    finally
+                    {
+                        suppressAutoSyncPush = false;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"auto-pull failed: {ex}");
+                SetSyncStatus("Sync error", false);
+            }
+            finally
+            {
+                isAutoSyncInProgress = false;
+                if (!isAutoSyncInProgress)
+                    SetSyncStatus("Synced ✓", false);
+            }
+        }
+
+        private async System.Threading.Tasks.Task TriggerSyncthingScanAsync()
+        {
+            try
+            {
+                string? apiKey = GetSyncthingApiKey();
+                string? folderId = GetSyncthingFolderId();
+
+                if (string.IsNullOrWhiteSpace(apiKey) ||
+                    string.IsNullOrWhiteSpace(folderId))
+                    return;
+
+                using System.Net.Http.HttpClient client = new();
+
+                client.Timeout = TimeSpan.FromSeconds(3);
+                client.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+
+                string url =
+                    $"http://127.0.0.1:8384/rest/db/scan?folder={Uri.EscapeDataString(folderId)}";
+
+                using System.Net.Http.HttpResponseMessage resp =
+                    await client.PostAsync(url, null);
+
+                HostsFileBlocker.Log($"syncthing scan triggered ({resp.StatusCode})");
+            }
+            catch
+            {
+            }
+        }
+
+        private static string? GetSyncthingApiKey()
+        {
+            foreach (string p in new[]
+            {
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Syncthing", "config.xml"),
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "Syncthing", "config.xml")
+            })
+            {
+                try
+                {
+                    if (!File.Exists(p)) continue;
+                    string xml = File.ReadAllText(p);
+                    int s = xml.IndexOf("<apikey>", StringComparison.OrdinalIgnoreCase);
+                    if (s < 0) continue;
+                    s += 8;
+                    int e = xml.IndexOf("</apikey>", s, StringComparison.OrdinalIgnoreCase);
+                    if (e < 0) continue;
+                    string key = xml.Substring(s, e - s).Trim();
+                    if (!string.IsNullOrWhiteSpace(key)) return key;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        private string? GetSyncthingFolderId()
+        {
+            try
+            {
+                string folderPath = syncManager.SyncFolder;
+
+                foreach (string p in new[]
+                {
+                    Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "Syncthing", "config.xml"),
+                    Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "Syncthing", "config.xml")
+                })
+                {
+                    if (!File.Exists(p)) continue;
+                    string xml = File.ReadAllText(p);
+                    int idx = 0;
+                    while (true)
+                    {
+                        int fi = xml.IndexOf("<folder ", idx, StringComparison.OrdinalIgnoreCase);
+                        if (fi < 0) break;
+                        int pi = xml.IndexOf("path=\"", fi, StringComparison.OrdinalIgnoreCase);
+                        int ii = xml.IndexOf("id=\"", fi, StringComparison.OrdinalIgnoreCase);
+                        if (pi < 0 || ii < 0) { idx = fi + 8; continue; }
+                        int ps = pi + 6; int pe = xml.IndexOf('"', ps);
+                        int is_ = ii + 4; int ie = xml.IndexOf('"', is_);
+                        if (pe < 0 || ie < 0) break;
+                        string fpath = xml.Substring(ps, pe - ps);
+                        string fid = xml.Substring(is_, ie - is_);
+                        if (fpath.Equals(folderPath, StringComparison.OrdinalIgnoreCase))
+                            return fid;
+                        idx = Math.Max(pe, ie) + 1;
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         // ============================================================
@@ -1391,12 +1817,39 @@ namespace LochlanProductivity
 
             foreach (TodoTask task in orderedTasks)
             {
+                // Frost card — misty field palette
+                Border card =
+                    new Border
+                    {
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 250, 251, 249)),
+                        BorderBrush =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(12),
+                        Padding = new Thickness(4),
+                        Margin = new Thickness(0)
+                    };
+
+                // Left wood accent for incomplete tasks
+                if (!task.IsCompleted)
+                {
+                    card.BorderBrush =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(255, 142, 125, 107));
+                    card.BorderThickness = new Thickness(1, 1, 1, 1);
+                }
+
                 Grid taskRow =
                     new Grid
                     {
                         Padding =
                             new Thickness(12)
                     };
+
+                card.Child = taskRow;
 
                 taskRow.ColumnDefinitions.Add(
                     new ColumnDefinition
@@ -1567,7 +2020,19 @@ namespace LochlanProductivity
                                 12,
                                 0,
                                 6,
-                                0)
+                                0),
+
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)),
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)),
+                        BorderBrush =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(10, 4, 10, 4)
                     };
 
                 editButton.Click +=
@@ -1598,7 +2063,19 @@ namespace LochlanProductivity
                                 12,
                                 0,
                                 6,
-                                0)
+                                0),
+
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 242, 243, 240)),
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 90, 100, 96)),
+                        BorderBrush =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(10, 4, 10, 4)
                     };
 
                 blockedAppsButton.Click +=
@@ -1622,7 +2099,19 @@ namespace LochlanProductivity
                             "Remove",
 
                         VerticalAlignment =
-                            VerticalAlignment.Center
+                            VerticalAlignment.Center,
+
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)),
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)),
+                        BorderBrush =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(255, 232, 207, 207)),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(10, 4, 10, 4)
                     };
 
                 removeButton.Click +=
@@ -1643,7 +2132,7 @@ namespace LochlanProductivity
 
                 taskRow.Children.Add(removeButton);
 
-                TaskList.Children.Add(taskRow);
+                TaskList.Children.Add(card);
             }
         }
 
@@ -5416,6 +5905,9 @@ namespace LochlanProductivity
                     tempFilePath,
                     saveFilePath,
                     true);
+
+                if (!suppressAutoSyncPush)
+                    QueueAutoSync();
             }
             catch (Exception ex)
             {
@@ -5790,7 +6282,7 @@ namespace LochlanProductivity
                 StartupState state =
                     await startupManager.GetStateAsync();
 
-                StartupToggleButton.Content =
+                string label =
                     state switch
                     {
                         StartupState.Enabled =>
@@ -5804,11 +6296,34 @@ namespace LochlanProductivity
 
                         _ => "Start with Windows ✗"
                     };
+
+                StartupToggleButton.Content = label;
             }
             catch
             {
                 StartupToggleButton.Content =
                     "Start with Windows";
+            }
+        }
+
+        private void SetSyncStatus(string text, bool syncing)
+        {
+            try
+            {
+                if (SyncStatusText != null)
+                    SyncStatusText.Text = text;
+
+                if (SyncStatusDot != null)
+                {
+                    SyncStatusDot.Fill =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            syncing
+                                ? Microsoft.UI.ColorHelper.FromArgb(255, 196, 184, 172)
+                                : Microsoft.UI.ColorHelper.FromArgb(255, 138, 154, 139));
+                }
+            }
+            catch
+            {
             }
         }
 
