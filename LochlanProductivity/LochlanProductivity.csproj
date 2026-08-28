@@ -19,6 +19,8 @@
 		
 
 	<ItemGroup>
+		<PackageReference Include="Google.Apis.Auth" Version="1.69.0" />
+		<PackageReference Include="Google.Apis.Calendar.v3" Version="1.68.0.3802" />
 		<PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260811000" />
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
 	</ItemGroup>

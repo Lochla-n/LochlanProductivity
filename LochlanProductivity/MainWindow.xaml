@@ -48,6 +48,7 @@
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Blocked Websites" Click="BlockedSitesButton_Click"/>
                             <MenuFlyoutItem Text="Sync Folder" Click="SyncFolderButton_Click"/>
+                            <MenuFlyoutItem Text="Google Calendar" Click="CalendarButton_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Start with Windows" Click="StartupToggle_Click"/>
                         </MenuFlyout>
@@ -68,8 +69,12 @@
                     <StackPanel Grid.Column="0" Spacing="2">
                         <TextBlock x:Name="BlockingStatusText" Text="Focus Mode is OFF" FontSize="15" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
                         <TextBlock x:Name="BlockedAppStatusText" Text="No apps are currently being monitored." FontSize="12" FontFamily="Segoe UI Variable Text" Foreground="#FF6B5E52"/>
+                        <TextBlock x:Name="CalendarStatusText" Visibility="Collapsed" FontSize="11" Foreground="#FF6B7C6E" TextWrapping="Wrap"/>
                     </StackPanel>
-                    <Button x:Name="BlockingButton" Grid.Column="1" Content="Start Focus Mode" Click="BlockingButton_Click" Padding="18,8" Margin="16,0,0,0" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8"/>
+                    <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                        <Button x:Name="BlockingButton" Content="Start Focus Mode" Click="BlockingButton_Click" Padding="18,8" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8"/>
+                        <Button x:Name="EmergencyButton" Content="Emergency: Allow YouTube (15m)" Click="EmergencyButton_Click" Visibility="Collapsed" Background="#FFF8F0F0" Foreground="#FFA65D3C" BorderBrush="#FFE8CFCF" BorderThickness="1" CornerRadius="8" FontSize="11" Padding="10,4"/>
+                    </StackPanel>
                 </Grid>
             </Border>
         </Border>
