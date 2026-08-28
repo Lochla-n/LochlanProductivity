@@ -51,6 +51,8 @@
                             <MenuFlyoutItem Text="Google Calendar" Click="CalendarButton_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Start with Windows" Click="StartupToggle_Click"/>
+                            <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="Emergency: Allow YouTube (15m)" Click="EmergencyButton_Click" Opacity="0.55"/>
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>

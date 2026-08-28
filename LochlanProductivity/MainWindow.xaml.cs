@@ -799,13 +799,16 @@ namespace LochlanProductivity
         {
             try
             {
+                // EmergencyButton in the Focus card is kept collapsed
+                // by design (user asked for harder-to-see). Real trigger
+                // is ... menu → Emergency: Allow YouTube (15m).
+                EmergencyButton.Visibility = Visibility.Collapsed;
+
                 if (IsYouTubeEmergencyActive)
                 {
                     CalendarStatusText.Visibility = Visibility.Visible;
                     CalendarStatusText.Text =
-                        $"⚡ Emergency bypass until {calendarEmergencyUntil: t} — YouTube temporarily allowed";
-
-                    EmergencyButton.Visibility = Visibility.Collapsed;
+                        $"⚡ Emergency YouTube until {calendarEmergencyUntil: t} — temporarily allowed";
                 }
                 else if (IsFocusModeLocked)
                 {
@@ -814,20 +817,17 @@ namespace LochlanProductivity
                     if (IsCalendarHardBlocked)
                     {
                         CalendarStatusText.Text =
-                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class";
+                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class (… → Emergency)";
                     }
                     else
                     {
                         CalendarStatusText.Text =
-                            "YouTube blocked — use emergency to allow for tutorial";
+                            "YouTube blocked — … → Emergency: Allow YouTube (15m) for tutorial";
                     }
-
-                    EmergencyButton.Visibility = Visibility.Visible;
                 }
                 else
                 {
                     CalendarStatusText.Visibility = Visibility.Collapsed;
-                    EmergencyButton.Visibility = Visibility.Collapsed;
                 }
 
                 UpdateCalendarStatusText();
