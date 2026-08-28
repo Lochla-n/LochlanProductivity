@@ -359,22 +359,6 @@ namespace LochlanProductivity
                         Spacing = 10
                     };
 
-                if (dailyPromptManager.CurrentStreak > 0)
-                {
-                    dialogContent.Children.Add(
-                        new TextBlock
-                        {
-                            Text =
-                                $"Streak: {dailyPromptManager.CurrentStreak} day(s) " +
-                                $"(best {dailyPromptManager.BestStreak})",
-
-                            FontWeight =
-                                Microsoft.UI.Text.FontWeights.SemiBold,
-
-                            Opacity = 0.85
-                        });
-                }
-
                 dialogContent.Children.Add(
                     new TextBlock
                     {
@@ -1964,7 +1948,21 @@ namespace LochlanProductivity
                 blockedSiteStore.Domains.Count > 0;
 
             if (websiteBlocksApplied == desired)
-                return;
+            {
+                // Upgrade path: old hosts files blocked the CDN/embed
+                // domains that are now bypassed. Force a one-time
+                // re-apply to strip them so ableton-style embeds work.
+                if (desired &&
+                    appSettings.AllowYouTubeEmbeds &&
+                    HostsSectionContainsEmbedBypass())
+                {
+                    websiteBlocksApplied = null;
+                }
+                else
+                {
+                    return;
+                }
+            }
 
             bool wasApplied = websiteBlocksApplied == true;
 
@@ -1976,12 +1974,28 @@ namespace LochlanProductivity
                 $"incompleteTasks={HasIncompleteTasks}, " +
                 $"domains={blockedSiteStore.Domains.Count})");
 
+            // When embed-allow is on, keep the main youtube.com
+            // blocked but leave the CDN/embed domains resolvable so
+            // an iframe like https://www.youtube-nocookie.com/embed/...
+            // or a plain https://www.youtube.com/embed/... can still
+            // fetch its video data from googlevideo/ytimg. Hosts cannot
+            // distinguish navigation vs embed, so direct youtube.com
+            // visits stay blocked while youtube-nocookie embeds work.
+            IEnumerable<string> effectiveDomains =
+                blockedSiteStore.Domains;
+
+            if (appSettings.AllowYouTubeEmbeds)
+            {
+                effectiveDomains =
+                    effectiveDomains.Where(domain =>
+                        !IsYouTubeEmbedBypassDomain(domain));
+            }
+
             try
             {
                 bool success =
                     desired
-                        ? hostsFileBlocker.Apply(
-                            blockedSiteStore.Domains)
+                        ? hostsFileBlocker.Apply(effectiveDomains)
                         : hostsFileBlocker.Remove();
 
                 if (!success)
@@ -2032,6 +2046,66 @@ namespace LochlanProductivity
 
                 HostsFileBlocker.Log(
                     $"update threw: {ex.Message}");
+            }
+        }
+
+        private static bool IsYouTubeEmbedBypassDomain(string domain)
+        {
+            string lowered = domain.ToLowerInvariant();
+
+            return lowered.Contains("youtube-nocookie") ||
+                   lowered.Contains("youtubeeducation") ||
+                   lowered.Contains("googlevideo") ||
+                   lowered.Contains("ytimg") ||
+                   lowered.Contains("ggpht") ||
+                   lowered.Contains("googleusercontent");
+        }
+
+        private static bool HostsSectionContainsEmbedBypass()
+        {
+            try
+            {
+                string path = Services.HostsFileBlocker.HostsPath;
+
+                if (!File.Exists(path))
+                    return false;
+
+                string[] lines = File.ReadAllLines(path);
+
+                bool inside = false;
+
+                foreach (string line in lines)
+                {
+                    string trimmed = line.Trim();
+
+                    if (trimmed.Equals(
+                            Services.HostsFileBlocker.BeginMarker,
+                            StringComparison.Ordinal))
+                    {
+                        inside = true;
+                        continue;
+                    }
+
+                    if (trimmed.Equals(
+                            Services.HostsFileBlocker.EndMarker,
+                            StringComparison.Ordinal))
+                    {
+                        inside = false;
+                        continue;
+                    }
+
+                    if (inside &&
+                        IsYouTubeEmbedBypassDomain(trimmed))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -2100,6 +2174,53 @@ namespace LochlanProductivity
                 };
 
             panel.Children.Add(killBrowsersBox);
+
+            CheckBox allowEmbedsBox =
+                new CheckBox
+                {
+                    Content =
+                        "Allow embedded YouTube (youtube-nocookie / " +
+                        "ableton tutorials) while blocking direct " +
+                        "youtube.com visits",
+
+                    IsChecked =
+                        appSettings.AllowYouTubeEmbeds
+                };
+
+            allowEmbedsBox.Checked +=
+                (s, args) =>
+                {
+                    appSettings.AllowYouTubeEmbeds = true;
+                    appSettings.Save();
+                    websiteBlocksApplied = null;
+                    UpdateWebsiteBlockingState();
+                };
+
+            allowEmbedsBox.Unchecked +=
+                (s, args) =>
+                {
+                    appSettings.AllowYouTubeEmbeds = false;
+                    appSettings.Save();
+                    websiteBlocksApplied = null;
+                    UpdateWebsiteBlockingState();
+                };
+
+            panel.Children.Add(allowEmbedsBox);
+
+            panel.Children.Add(
+                new TextBlock
+                {
+                    Text =
+                        "Hosts files cannot tell a youtube.com embed " +
+                        "from a visit to youtube.com itself, so some " +
+                        "embeds via www.youtube.com/embed will still " +
+                        "be blocked. Use youtube-nocookie.com embeds " +
+                        "where possible.",
+
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 11,
+                    Opacity = 0.6
+                });
 
             TextBox addBox =
                 new TextBox
@@ -2718,15 +2839,6 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
-            if (HasIncompleteTasks)
-            {
-                await ShowSimpleMessageAsync(
-                    "Schedule settings are locked while tasks are incomplete.\n\n" +
-                    "Complete all tasks before changing schedules.");
-
-                return;
-            }
-
             while (true)
             {
                 bool createNewSchedule = false;

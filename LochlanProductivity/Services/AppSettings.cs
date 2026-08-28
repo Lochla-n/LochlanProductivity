@@ -23,6 +23,14 @@ namespace LochlanProductivity.Services
 
         public bool KillBrowsersOnEngage { get; set; } = false;
 
+        // When true, youtube-related CDN/media domains are NOT blocked
+        // via hosts so embedded players keep working while
+        // youtube.com itself remains blocked for direct navigation.
+        // Hosts files cannot distinguish navigation vs iframe, so
+        // the main youtube.com block stays but nocookie + CDN stays
+        // resolvable.
+        public bool AllowYouTubeEmbeds { get; set; } = true;
+
         public AppSettingsManager()
         {
             Load();
@@ -45,7 +53,10 @@ namespace LochlanProductivity.Services
                         new SettingsData
                         {
                             KillBrowsersOnEngage =
-                                KillBrowsersOnEngage
+                                KillBrowsersOnEngage,
+
+                            AllowYouTubeEmbeds =
+                                AllowYouTubeEmbeds
                         },
                         new JsonSerializerOptions
                         {
@@ -88,6 +99,25 @@ namespace LochlanProductivity.Services
 
                 KillBrowsersOnEngage =
                     loaded.KillBrowsersOnEngage;
+
+                // New field defaults to true for embeds; old files
+                // missing the property deserve the same default.
+                // System.Text.Json leaves bool as false when missing,
+                // so treat a missing-file upgrade via file-not-found
+                // above; here we just honor what was saved. If the
+                // file existed but lacked the property, keep true.
+                if (File.ReadAllText(saveFilePath)
+                        .Contains("AllowYouTubeEmbeds", StringComparison.OrdinalIgnoreCase))
+                {
+                    AllowYouTubeEmbeds =
+                        loaded.AllowYouTubeEmbeds;
+                }
+                else
+                {
+                    // Upgrade path: existing installs get embeds allowed
+                    // (the user's requested behaviour).
+                    AllowYouTubeEmbeds = true;
+                }
             }
             catch (Exception ex)
             {
@@ -101,6 +131,8 @@ namespace LochlanProductivity.Services
         private class SettingsData
         {
             public bool KillBrowsersOnEngage { get; set; }
+
+            public bool AllowYouTubeEmbeds { get; set; } = true;
         }
     }
 }
