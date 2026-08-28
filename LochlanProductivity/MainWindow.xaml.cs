@@ -6703,9 +6703,41 @@ namespace LochlanProductivity
                 StartupState state =
                     await startupManager.GetStateAsync();
 
-                if (state == StartupState.Disabled)
+                if (state == StartupState.DisabledByPolicy)
+                    return;
+
+                if (state != StartupState.Enabled)
                 {
                     await startupManager.SetEnabledAsync(true);
+                }
+
+                // Extra fallback for desktop: Task Manager DisabledByUser
+                // doesn't always re-enable via StartupTask, and MSIX
+                // virtualizes the Run key — set the real HKCU Run key
+                // directly so startup actually sticks even if the user
+                // toggled it off once.
+                try
+                {
+                    using Microsoft.Win32.RegistryKey? key =
+                        Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                            @"Software\Microsoft\Windows\CurrentVersion\Run",
+                            true);
+
+                    if (key != null)
+                    {
+                        string? exe = Environment.ProcessPath;
+
+                        if (!string.IsNullOrWhiteSpace(exe) &&
+                            key.GetValue("LochlanProductivity") == null)
+                        {
+                            key.SetValue(
+                                "LochlanProductivity",
+                                $"\"{exe}\"");
+                        }
+                    }
+                }
+                catch
+                {
                 }
             }
             catch
