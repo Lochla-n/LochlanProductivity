@@ -633,6 +633,50 @@ namespace LochlanProductivity.Services
                     CopyTaskInto(existing, incomingTask);
                     changes++;
                 }
+                else if (incomingTask.LastModified == existing.LastModified)
+                {
+                    // Equal timestamp but diverged state (same-second
+                    // edits on two machines). Preserve completions and
+                    // deletions — if either side is completed/deleted,
+                    // the result should be.
+                    bool needsUpdate = false;
+
+                    if (incomingTask.IsCompleted != existing.IsCompleted)
+                    {
+                        if (incomingTask.IsCompleted)
+                        {
+                            existing.IsCompleted = true;
+                            needsUpdate = true;
+                        }
+                        // If local is completed and incoming is not,
+                        // keep local completed — no update needed.
+                    }
+
+                    if (incomingTask.IsDeleted != existing.IsDeleted)
+                    {
+                        if (incomingTask.IsDeleted)
+                        {
+                            existing.IsDeleted = true;
+                            needsUpdate = true;
+                        }
+                    }
+
+                    // Title/priority etc should still converge to incoming
+                    // when equal but different — newest writer wins.
+                    if (incomingTask.Title != existing.Title ||
+                        incomingTask.Priority != existing.Priority)
+                    {
+                        existing.Title = incomingTask.Title;
+                        existing.Priority = incomingTask.Priority;
+                        needsUpdate = true;
+                    }
+
+                    if (needsUpdate)
+                    {
+                        existing.LastModified = DateTime.UtcNow;
+                        changes++;
+                    }
+                }
             }
 
             return changes;
@@ -693,9 +737,16 @@ namespace LochlanProductivity.Services
                     continue;
                 }
 
-                if (incomingGroup.LastModified >
+                if (incomingGroup.LastModified >=
                     existing.LastModified)
                 {
+                    if (incomingGroup.LastModified == existing.LastModified &&
+                        incomingGroup.Name == existing.Name &&
+                        incomingGroup.Description == existing.Description)
+                    {
+                        continue;
+                    }
+
                     existing.Name = incomingGroup.Name;
                     existing.Description = incomingGroup.Description;
                     existing.Apps =
@@ -748,9 +799,16 @@ namespace LochlanProductivity.Services
                     continue;
                 }
 
-                if (incomingSchedule.LastModified >
+                if (incomingSchedule.LastModified >=
                     existing.LastModified)
                 {
+                    if (incomingSchedule.LastModified == existing.LastModified &&
+                        incomingSchedule.Name == existing.Name &&
+                        incomingSchedule.IsEnabled == existing.IsEnabled)
+                    {
+                        continue;
+                    }
+
                     existing.Name = incomingSchedule.Name;
                     existing.IsEnabled = incomingSchedule.IsEnabled;
                     existing.StartTime = incomingSchedule.StartTime;

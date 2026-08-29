@@ -145,13 +145,21 @@ namespace LochlanProductivity
         private readonly string saveDirectory =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.UserProfile),
-                "LochlanProductivityData");
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity");
 
         private readonly string saveFilePath =
             Path.Combine(
                 Environment.GetFolderPath(
-                    Environment.SpecialFolder.UserProfile),
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity",
+                "tasks.json");
+
+        // Legacy Syncthing-synced location — raw tasks.json there caused
+        // cross-device overwrites. Migrated to LocalAppData on next load.
+        private static string LegacySaveFilePath =>
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "LochlanProductivityData",
                 "tasks.json");
 
@@ -6369,6 +6377,40 @@ namespace LochlanProductivity
         {
             try
             {
+                // One-time migration from Syncthing-synced location.
+                if (!File.Exists(saveFilePath) &&
+                    File.Exists(LegacySaveFilePath))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(saveDirectory);
+                        File.Copy(LegacySaveFilePath, saveFilePath);
+                    }
+                    catch { }
+                }
+
+                // Also migrate raw tasks.json -> add .stignore so
+                // Syncthing stops overwriting the new local file.
+                try
+                {
+                    string stignore = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "LochlanProductivityData",
+                        ".stignore");
+                    if (File.Exists(
+                        Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                            "LochlanProductivityData",
+                            "tasks.json")) &&
+                        (!File.Exists(stignore) ||
+                         !File.ReadAllText(stignore).Contains("tasks.json")))
+                    {
+                        File.AppendAllText(stignore,
+                            "\ntasks.json\ntasks.json.tmp\ntasks.json.seal\n*.tmp\n");
+                    }
+                }
+                catch { }
+
                 if (!File.Exists(saveFilePath))
                 {
                     System.Diagnostics.Debug.WriteLine(
@@ -6569,9 +6611,17 @@ namespace LochlanProductivity
                                 continue;
                             }
 
-                            if (incoming.LastModified >
+                            if (incoming.LastModified >=
                                 existing.LastModified)
                             {
+                                if (incoming.LastModified == existing.LastModified &&
+                                    incoming.Title == existing.Title &&
+                                    incoming.IsCompleted == existing.IsCompleted &&
+                                    incoming.IsDeleted == existing.IsDeleted)
+                                {
+                                    continue;
+                                }
+
                                 existing.Title = incoming.Title;
                                 existing.IsCompleted = incoming.IsCompleted;
                                 existing.IsDeleted = incoming.IsDeleted;
