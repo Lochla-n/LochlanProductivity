@@ -630,19 +630,7 @@ namespace LochlanProductivity.Services
 
                 if (incomingTask.LastModified > existing.LastModified)
                 {
-                    // Strictness: a remote completion must not unlock
-                    // this machine while local work is still pending.
-                    // Preserve local "incomplete" over remote "complete".
-                    bool localIncomplete = !existing.IsCompleted;
-
                     CopyTaskInto(existing, incomingTask);
-
-                    if (localIncomplete &&
-                        existing.IsCompleted)
-                    {
-                        existing.IsCompleted = false;
-                    }
-
                     changes++;
                 }
             }

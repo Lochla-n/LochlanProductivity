@@ -736,7 +736,10 @@ namespace LochlanProductivity
 
         private bool HasIncompleteTasks =>
             IsDailyPlanMissing ||
-            ActiveTasks.Any(task => !task.IsCompleted);
+            ActiveTasks.Any(
+                task =>
+                    !task.IsCompleted &&
+                    taskRecurrenceManager.IsDue(task));
 
         private bool IsFocusModeLocked =>
             HasIncompleteTasks || IsCalendarHardBlocked;
@@ -1880,6 +1883,9 @@ namespace LochlanProductivity
             foreach (TodoTask task in ActiveTasks)
             {
                 if (task.IsCompleted)
+                    continue;
+
+                if (!taskRecurrenceManager.IsDue(task))
                     continue;
 
                 map[task] =
@@ -6566,9 +6572,6 @@ namespace LochlanProductivity
                             if (incoming.LastModified >
                                 existing.LastModified)
                             {
-                                bool localIncomplete =
-                                    !existing.IsCompleted;
-
                                 existing.Title = incoming.Title;
                                 existing.IsCompleted = incoming.IsCompleted;
                                 existing.IsDeleted = incoming.IsDeleted;
@@ -6586,12 +6589,6 @@ namespace LochlanProductivity
                                     new List<DayOfWeek>(incoming.RecurrenceDays ?? new());
                                 existing.DueDate = incoming.DueDate;
                                 existing.LastCompletedDate = incoming.LastCompletedDate;
-
-                                if (localIncomplete &&
-                                    existing.IsCompleted)
-                                {
-                                    existing.IsCompleted = false;
-                                }
 
                                 totalMerged++;
                             }
