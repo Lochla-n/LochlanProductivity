@@ -99,9 +99,35 @@
             </Grid>
         </Border>
 
-        <!-- TASK LIST -->
+        <!-- TASK LIST — Today -->
         <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="TaskList" Spacing="10"/>
+            <StackPanel Spacing="18">
+                <StackPanel x:Name="TaskList" Spacing="10"/>
+
+                <!-- FUTURE — shows recurring / scheduled tasks not yet due -->
+                <StackPanel x:Name="FutureSection" Spacing="8">
+                    <TextBlock Text="Coming Up" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
+                    <TextBlock Text="Tasks scheduled for the future — they’ll appear unmarked on their day." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
+                    <StackPanel x:Name="FutureTaskList" Spacing="10"/>
+                </StackPanel>
+
+                <!-- LONG-TERM & NOTES — no due date, never blocks -->
+                <StackPanel x:Name="LongTermSection" Spacing="8">
+                    <TextBlock Text="Long-term &amp; Notes" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
+                    <TextBlock Text="Ideas, goals, and info to remember — no due date, never blocks focus." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
+                    <Border Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="LongTermInput" Grid.Column="0" PlaceholderText="Add a long-term goal or note…" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="LongTermInput_KeyDown"/>
+                            <Button Grid.Column="1" Content="Add Note" Margin="10,0,0,0" Click="AddLongTerm_Click" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
+                        </Grid>
+                    </Border>
+                    <StackPanel x:Name="LongTermTaskList" Spacing="10"/>
+                </StackPanel>
+            </StackPanel>
         </ScrollViewer>
 
     </Grid>

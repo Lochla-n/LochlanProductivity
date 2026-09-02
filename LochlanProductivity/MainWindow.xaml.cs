@@ -2019,6 +2019,44 @@ namespace LochlanProductivity
             }
         }
 
+        private void LongTermInput_KeyDown(
+            object sender,
+            KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                AddLongTerm();
+            }
+        }
+
+        private void AddLongTerm_Click(object sender, RoutedEventArgs e)
+        {
+            AddLongTerm();
+        }
+
+        private async void AddLongTerm()
+        {
+            string text = LongTermInput.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            TodoTask task = new TodoTask
+            {
+                Title = text,
+                IsCompleted = false,
+                IsLongTerm = true,
+                DueDate = DateTime.Today,
+                BlockedGroups = new List<string>(),
+                BlockedApps = new List<BlockedApp>()
+            };
+
+            tasks.Add(task);
+            await SaveTasksAsync();
+            LongTermInput.Text = "";
+            RefreshTaskList();
+        }
+
         private async void AddTask()
         {
             string text =
@@ -2068,7 +2106,7 @@ namespace LochlanProductivity
         private async void RemoveTask(
             TodoTask task)
         {
-            if (!task.IsCompleted)
+            if (!task.IsCompleted && !task.IsLongTerm)
             {
                 await ShowSimpleMessageAsync(
                     "This task cannot be removed while it is incomplete.\n\n" +
@@ -2131,8 +2169,12 @@ namespace LochlanProductivity
         private void RefreshTaskList()
         {
             TaskList.Children.Clear();
+            FutureTaskList.Children.Clear();
+            LongTermTaskList.Children.Clear();
 
+            // Today: due and not long-term
             List<TodoTask> orderedTasks = ActiveTasks
+                .Where(task => !task.IsLongTerm && taskRecurrenceManager.IsDue(task))
                 .OrderBy(task => task.IsCompleted)
                 .ThenByDescending(task => (int)task.Priority)
                 .ThenBy(GetEffectiveDeadline)
@@ -2140,6 +2182,25 @@ namespace LochlanProductivity
                     task => task.Title,
                     StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            // Future: not long-term, not due yet, but has a future due date
+            List<TodoTask> futureTasks = ActiveTasks
+                .Where(task => !task.IsLongTerm && !taskRecurrenceManager.IsDue(task) && task.DueDate.Date > DateTime.Today)
+                .OrderBy(task => task.DueDate)
+                .ThenBy(task => task.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Long-term notes: never due, never blocks
+            List<TodoTask> longTermTasks = ActiveTasks
+                .Where(task => task.IsLongTerm)
+                .OrderBy(task => task.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            FutureSection.Visibility =
+                futureTasks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            // LongTermSection always visible so you can add notes
+            // (header stays, list may be empty)
 
             foreach (TodoTask task in orderedTasks)
             {
@@ -2474,6 +2535,170 @@ namespace LochlanProductivity
                 taskRow.Children.Add(removeButton);
 
                 TaskList.Children.Add(card);
+            }
+
+            // Future tasks — show as muted cards with due date
+            foreach (TodoTask task in futureTasks)
+            {
+                Border card = new Border
+                {
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(180, 250, 251, 249)),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(4),
+                    Opacity = 0.85
+                };
+
+                Grid row = new Grid { Padding = new Thickness(12) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                card.Child = row;
+
+                TextBlock title = new TextBlock
+                {
+                    Text = task.Title,
+                    FontSize = 15,
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 90, 100, 96)),
+                    TextWrapping = TextWrapping.Wrap,
+                    Opacity = 0.9
+                };
+
+                TextBlock meta = new TextBlock
+                {
+                    Text = $"Due {task.DueDate:d}" + (task.IsRecurring ? $" · {taskRecurrenceManager.GetRecurrenceDescription(task)}" : ""),
+                    FontSize = 11,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 107, 94, 82)),
+                    Opacity = 0.8
+                };
+
+                StackPanel sp = new StackPanel { Spacing = 2 };
+                sp.Children.Add(title);
+                sp.Children.Add(meta);
+
+                TextBlock dueBadge = new TextBlock
+                {
+                    Text = task.DueDate.ToString("MMM d"),
+                    FontSize = 11,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 142, 125, 107)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 0, 6, 0)
+                };
+
+                Button editBtn = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)), BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+                editBtn.Click += (s, e) => OpenEditTaskDialog(task);
+
+                Button rmBtn = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)), BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 207, 207)), VerticalAlignment = VerticalAlignment.Center };
+                rmBtn.Click += (s, e) => RemoveTask(task);
+
+                Grid.SetColumn(sp, 0);
+                Grid.SetColumn(dueBadge, 1);
+                Grid.SetColumn(editBtn, 2);
+                Grid.SetColumn(rmBtn, 3);
+                row.Children.Add(sp);
+                row.Children.Add(dueBadge);
+                row.Children.Add(editBtn);
+                row.Children.Add(rmBtn);
+                FutureTaskList.Children.Add(card);
+            }
+
+            if (futureTasks.Count == 0)
+            {
+                FutureTaskList.Children.Add(new TextBlock
+                {
+                    Text = "No upcoming tasks.",
+                    Opacity = 0.6,
+                    FontSize = 12,
+                    FontStyle = Windows.UI.Text.FontStyle.Italic
+                });
+            }
+
+            // Long-term notes — never due, never blocks
+            foreach (TodoTask task in longTermTasks)
+            {
+                Border card = new Border
+                {
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(204, 242, 243, 240)),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 210, 220, 210)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(4)
+                };
+
+                Grid row = new Grid { Padding = new Thickness(12) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                card.Child = row;
+
+                TextBlock title = new TextBlock
+                {
+                    Text = task.Title,
+                    FontSize = 15,
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 58, 70, 60)),
+                    TextWrapping = TextWrapping.Wrap
+                };
+
+                TextBlock noteMeta = new TextBlock
+                {
+                    Text = task.IsCompleted ? "Done" : "Note",
+                    FontSize = 11,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 107, 124, 110)),
+                    Opacity = 0.8
+                };
+
+                StackPanel sp = new StackPanel { Spacing = 2 };
+                sp.Children.Add(title);
+                sp.Children.Add(noteMeta);
+
+                CheckBox chk = new CheckBox
+                {
+                    IsChecked = task.IsCompleted,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    MinWidth = 0,
+                    Padding = new Thickness(0)
+                };
+                chk.Checked += async (s, e) => { task.IsCompleted = true; task.LastModified = DateTime.UtcNow; await SaveTasksAsync(); RefreshTaskList(); };
+                chk.Unchecked += async (s, e) => { task.IsCompleted = false; task.LastModified = DateTime.UtcNow; await SaveTasksAsync(); RefreshTaskList(); };
+
+                Button editBtn2 = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 6, 0) };
+                editBtn2.Click += (s, e) => OpenEditTaskDialog(task);
+
+                Button rmBtn2 = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)), VerticalAlignment = VerticalAlignment.Center };
+                rmBtn2.Click += (s, e) => RemoveTask(task);
+
+                Grid.SetColumn(chk, 0);
+                // shift sp to column 0 and chk as overlay? Simpler: put chk before title
+                // Rebuild row with chk + sp
+                row.ColumnDefinitions.Clear();
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                Grid.SetColumn(chk, 0);
+                Grid.SetColumn(sp, 1);
+                Grid.SetColumn(editBtn2, 2);
+                Grid.SetColumn(rmBtn2, 3);
+                row.Children.Add(chk);
+                row.Children.Add(sp);
+                row.Children.Add(editBtn2);
+                row.Children.Add(rmBtn2);
+                LongTermTaskList.Children.Add(card);
+            }
+
+            if (longTermTasks.Count == 0)
+            {
+                LongTermTaskList.Children.Add(new TextBlock
+                {
+                    Text = "No long-term notes yet — add a goal or piece of info above.",
+                    Opacity = 0.55,
+                    FontSize = 12,
+                    FontStyle = Windows.UI.Text.FontStyle.Italic,
+                    TextWrapping = TextWrapping.Wrap
+                });
             }
         }
 
@@ -7044,6 +7269,10 @@ namespace LochlanProductivity
 
         // Most recent date the task was completed.
         public DateTime? LastCompletedDate { get; set; }
+
+        // Long-term / note: no due date, never blocks, shown in
+        // its own section for goals & reference info.
+        public bool IsLongTerm { get; set; } = false;
     }
 
     public enum RecurrenceType

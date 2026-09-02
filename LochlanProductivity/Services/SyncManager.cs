@@ -661,6 +661,12 @@ namespace LochlanProductivity.Services
                         }
                     }
 
+                    if (incomingTask.IsLongTerm != existing.IsLongTerm)
+                    {
+                        existing.IsLongTerm = incomingTask.IsLongTerm;
+                        needsUpdate = true;
+                    }
+
                     // Title/priority etc should still converge to incoming
                     // when equal but different — newest writer wins.
                     if (incomingTask.Title != existing.Title ||
@@ -707,6 +713,7 @@ namespace LochlanProductivity.Services
                 new List<DayOfWeek>(source.RecurrenceDays ?? new());
             target.DueDate = source.DueDate;
             target.LastCompletedDate = source.LastCompletedDate;
+            target.IsLongTerm = source.IsLongTerm;
         }
 
         private int MergeGroups(

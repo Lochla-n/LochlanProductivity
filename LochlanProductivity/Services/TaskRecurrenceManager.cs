@@ -12,8 +12,11 @@ namespace LochlanProductivity.Services
 
         public bool IsDue(TodoTask task)
         {
+            if (task.IsLongTerm)
+                return false;
+
             if (!task.IsRecurring)
-                return !task.IsCompleted;
+                return !task.IsCompleted && task.DueDate.Date <= DateTime.Today;
 
             return task.DueDate.Date <= DateTime.Today;
         }
