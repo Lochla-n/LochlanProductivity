@@ -2172,9 +2172,10 @@ namespace LochlanProductivity
             FutureTaskList.Children.Clear();
             LongTermTaskList.Children.Clear();
 
-            // Today: due and not long-term
+            // Today: due today/overdue and not long-term — show both
+            // incomplete and completed (checked) so you see progress.
             List<TodoTask> orderedTasks = ActiveTasks
-                .Where(task => !task.IsLongTerm && taskRecurrenceManager.IsDue(task))
+                .Where(task => !task.IsLongTerm && task.DueDate.Date <= DateTime.Today)
                 .OrderBy(task => task.IsCompleted)
                 .ThenByDescending(task => (int)task.Priority)
                 .ThenBy(GetEffectiveDeadline)
