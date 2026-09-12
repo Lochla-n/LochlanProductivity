@@ -50,11 +50,11 @@
                             <MenuFlyoutItem Text="Blocked Websites" Click="BlockedSitesButton_Click"/>
                             <MenuFlyoutItem Text="Sync Folder" Click="SyncFolderButton_Click"/>
                             <MenuFlyoutSeparator/>
-                            <MenuFlyoutItem Text="Start with Windows" Click="StartupToggle_Click"/>
+                            <MenuFlyoutItem Text="Settings" Click="SettingsButton_Click"/>
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>
-                <Button x:Name="StartupToggleButton" Visibility="Collapsed" Click="StartupToggle_Click"/>
+                <Button x:Name="StartupToggleButton" Visibility="Collapsed"/>
             </StackPanel>
         </Grid>
 
@@ -118,7 +118,6 @@
                 <StackPanel Spacing="18">
                     <StackPanel x:Name="LongTermSection" Spacing="8">
                         <TextBlock Text="Long-term &amp; Notes" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
-                        <TextBlock Text="Ideas, goals, and info to remember — no due date, never blocks focus." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
                         <Border Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
                             <Grid>
                                 <Grid.ColumnDefinitions>

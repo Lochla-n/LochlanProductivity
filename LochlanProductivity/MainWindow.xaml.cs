@@ -2478,30 +2478,40 @@ namespace LochlanProductivity
                         }));
             }
 
-            CalendarDatePicker datePicker =
-                new CalendarDatePicker
+            // Inline month calendar on the right — the day is one tap
+            // away, no flyout needed.
+            DateTime selectedDate = DateTime.Today.AddDays(1);
+
+            CalendarView calendar =
+                new CalendarView
                 {
-                    Header = "Due date",
-                    Date = DateTimeOffset.Now.Date.AddDays(1),
-                    MinDate = DateTimeOffset.Now.Date
+                    SelectionMode = CalendarViewSelectionMode.Single,
+                    IsOutOfScopeEnabled = true,
+                    MinDate = new DateTimeOffset(DateTime.Today),
+                    MaxDate =
+                        new DateTimeOffset(DateTime.Today.AddYears(1)),
+                    VerticalAlignment = VerticalAlignment.Center
                 };
 
-            // Calendar starts already open so the day is one tap away.
-            datePicker.Loaded += (s, e) =>
+            calendar.SelectedDates.Add(new DateTimeOffset(selectedDate));
+
+            calendar.SelectedDatesChanged += (s, e) =>
             {
-                try { datePicker.IsCalendarOpen = true; }
-                catch { }
+                if (calendar.SelectedDates.Count > 0)
+                    selectedDate = calendar.SelectedDates[0].Date;
             };
 
-            StackPanel content =
+            StackPanel left =
                 new StackPanel
                 {
-                    Spacing = 10
+                    Spacing = 10,
+                    MinWidth = 240,
+                    VerticalAlignment = VerticalAlignment.Top
                 };
 
-            content.Children.Add(titleBox);
+            left.Children.Add(titleBox);
 
-            content.Children.Add(
+            left.Children.Add(
                 new TextBlock
                 {
                     Text = "Blocks",
@@ -2509,8 +2519,29 @@ namespace LochlanProductivity
                     Opacity = 0.7
                 });
 
-            content.Children.Add(dotRow);
-            content.Children.Add(datePicker);
+            left.Children.Add(dotRow);
+
+            Grid content = new Grid();
+
+            content.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width = new GridLength(1, GridUnitType.Star)
+                });
+
+            content.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width = GridLength.Auto
+                });
+
+            Grid.SetColumn(left, 0);
+            Grid.SetColumn(calendar, 1);
+
+            calendar.Margin = new Thickness(16, 0, 0, 0);
+
+            content.Children.Add(left);
+            content.Children.Add(calendar);
 
             ContentDialog dialog =
                 new ContentDialog
@@ -2539,8 +2570,7 @@ namespace LochlanProductivity
                 return;
             }
 
-            DateTime due =
-                (datePicker.Date ?? DateTimeOffset.Now.Date.AddDays(1)).Date;
+            DateTime due = selectedDate;
 
             TodoTask task =
                 new TodoTask
@@ -7740,34 +7770,140 @@ namespace LochlanProductivity
             }
         }
 
-        private async void StartupToggle_Click(
+        private void SettingsButton_Click(
             object sender,
             RoutedEventArgs e)
         {
-            if (HasIncompleteTasks)
+            _ = OpenSettingsDialogAsync();
+        }
+
+        // ============================================================
+        // SETTINGS
+        //
+        // App preferences live here (NOT blocking config like app
+        // groups or schedules). Deliberately NOT gated on incomplete
+        // tasks: nothing in here weakens enforcement. Add future
+        // customization options as new sections below.
+        // ============================================================
+
+        private async System.Threading.Tasks.Task OpenSettingsDialogAsync()
+        {
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 14
+                };
+
+            // ----------------------------------------------------
+            // STARTUP
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Startup",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 58, 46, 40))
+                });
+
+            StartupState startupState =
+                await startupManager.GetStateAsync();
+
+            ToggleSwitch startupToggle =
+                new ToggleSwitch
+                {
+                    Header = "Start with Windows",
+                    IsOn = startupState == StartupState.Enabled,
+                    IsEnabled =
+                        startupState != StartupState.DisabledByPolicy
+                };
+
+            TextBlock startupNote =
+                new TextBlock
+                {
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 107, 94, 82)),
+                    Text = startupState switch
+                    {
+                        StartupState.DisabledByPolicy =>
+                            "Startup is blocked by policy on this PC.",
+                        StartupState.DisabledByUser =>
+                            "Currently off (disabled in Task Manager). " +
+                            "Turn on to re-enable.",
+                        _ => "Open the app window on every logon."
+                    }
+                };
+
+            bool updatingStartup = false;
+
+            startupToggle.Toggled += async (s, e) =>
             {
-                await ShowSimpleMessageAsync(
-                    "Startup settings are locked while tasks are incomplete.\n\n" +
-                    "Complete all tasks before changing settings.");
+                if (updatingStartup)
+                    return;
 
-                return;
-            }
+                updatingStartup = true;
 
-            bool currentlyEnabled =
-                (await startupManager.GetStateAsync()) ==
-                    StartupState.Enabled;
+                try
+                {
+                    bool success =
+                        await startupManager.SetEnabledAsync(
+                            startupToggle.IsOn);
 
-            bool success =
-                await startupManager.SetEnabledAsync(
-                    !currentlyEnabled);
+                    StartupState fresh =
+                        await startupManager.GetStateAsync();
 
-            await UpdateStartupToggleButtonAsync();
+                    startupToggle.IsOn =
+                        fresh == StartupState.Enabled;
 
-            if (!success)
-            {
-                await ShowSimpleMessageAsync(
-                    "Could not change the Windows startup setting.");
-            }
+                    await UpdateStartupToggleButtonAsync();
+
+                    if (!success)
+                    {
+                        await ShowSimpleMessageAsync(
+                            "Could not change the Windows startup setting.");
+                    }
+                }
+                finally
+                {
+                    updatingStartup = false;
+                }
+            };
+
+            content.Children.Add(startupToggle);
+            content.Children.Add(startupNote);
+
+            // ----------------------------------------------------
+            // FUTURE SETTINGS GO HERE (new sections above this line)
+            // ----------------------------------------------------
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Settings",
+                    Content = new ScrollViewer
+                    {
+                        Content = content,
+                        MaxHeight = 420,
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto
+                    },
+                    CloseButtonText = "Close",
+                    XamlRoot = this.Content.XamlRoot,
+                    RequestedTheme = ElementTheme.Light
+                };
+
+            await dialog.ShowAsync();
         }
 
         // ============================================================
