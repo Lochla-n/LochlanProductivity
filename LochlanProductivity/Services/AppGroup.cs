@@ -11,6 +11,10 @@ namespace LochlanProductivity.Services
 
         public string Description { get; set; } = "";
 
+        // Quick-add dot color ("#RRGGBB"). Empty = auto: stable hash
+        // of Id over the built-in palette. Synced like Name.
+        public string Color { get; set; } = "";
+
         // Used by SyncManager to merge changes between computers.
         public DateTime LastModified { get; set; } = DateTime.UtcNow;
 

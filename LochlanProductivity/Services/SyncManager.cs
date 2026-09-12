@@ -774,13 +774,18 @@ namespace LochlanProductivity.Services
                 {
                     if (incomingGroup.LastModified == existing.LastModified &&
                         incomingGroup.Name == existing.Name &&
-                        incomingGroup.Description == existing.Description)
+                        incomingGroup.Description == existing.Description &&
+                        string.Equals(
+                            incomingGroup.Color ?? "",
+                            existing.Color ?? "",
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
                     existing.Name = incomingGroup.Name;
                     existing.Description = incomingGroup.Description;
+                    existing.Color = incomingGroup.Color ?? "";
                     existing.Apps =
                         new List<BlockedApp>(
                             incomingGroup.Apps ?? new());

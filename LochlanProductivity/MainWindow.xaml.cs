@@ -129,8 +129,60 @@ namespace LochlanProductivity
             "#A87E8F", "#5B7A99", "#94865C", "#7E6B9B"
         };
 
-        private static Windows.UI.Color GetGroupColor(AppGroup group)
+        private static Windows.UI.Color ColorFromHex(string hex)
         {
+            string h = (hex ?? "").Trim().TrimStart('#');
+
+            if (h.Length == 6)
+                h = "FF" + h;
+
+            if (h.Length != 8)
+                h = "FF8A9A8B";
+
+            return Microsoft.UI.ColorHelper.FromArgb(
+                Convert.ToByte(h.Substring(0, 2), 16),
+                Convert.ToByte(h.Substring(2, 2), 16),
+                Convert.ToByte(h.Substring(4, 2), 16),
+                Convert.ToByte(h.Substring(6, 2), 16));
+        }
+
+        private static bool TryParseHexColor(
+            string? hex,
+            out Windows.UI.Color color)
+        {
+            color = default;
+
+            if (string.IsNullOrWhiteSpace(hex))
+                return false;
+
+            string h = hex.Trim().TrimStart('#');
+
+            if (h.Length != 6 && h.Length != 8)
+                return false;
+
+            foreach (char c in h)
+            {
+                if (!Uri.IsHexDigit(c))
+                    return false;
+            }
+
+            color = ColorFromHex(h);
+
+            return true;
+        }
+
+        // Explicit color wins; empty falls back to the stable hash so
+        // old/synced groups keep the color they always had.
+        private static string GetGroupHex(AppGroup group)
+        {
+            if (group != null &&
+                TryParseHexColor(group.Color, out _))
+            {
+                string h = group.Color.Trim().TrimStart('#');
+
+                return "#" + h.ToUpperInvariant();
+            }
+
             unchecked
             {
                 uint hash = 2166136261;
@@ -144,18 +196,81 @@ namespace LochlanProductivity
                     hash *= 16777619;
                 }
 
-                return Microsoft.UI.ColorHelper.FromArgb(
-                    255,
-                    Convert.ToByte(
-                        GroupColorPalette[hash % GroupColorPalette.Length]
-                            .Substring(1, 2), 16),
-                    Convert.ToByte(
-                        GroupColorPalette[hash % GroupColorPalette.Length]
-                            .Substring(3, 2), 16),
-                    Convert.ToByte(
-                        GroupColorPalette[hash % GroupColorPalette.Length]
-                            .Substring(5, 2), 16));
+                return GroupColorPalette[hash % GroupColorPalette.Length];
             }
+        }
+
+        private static Windows.UI.Color GetGroupColor(AppGroup group)
+        {
+            return ColorFromHex(GetGroupHex(group));
+        }
+
+        // Small swatch row for the group edit/create dialogs. Calls
+        // onPick with "#RRGGBB" on every tap; caller keeps the value.
+        private StackPanel BuildGroupColorPicker(
+            string initialHex,
+            Action<string> onPick)
+        {
+            StackPanel row =
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6
+                };
+
+            List<Button> swatches = new();
+
+            void Refresh(string current)
+            {
+                foreach (Button sw in swatches)
+                {
+                    bool isCurrent =
+                        string.Equals(
+                            (string)sw.Tag,
+                            current,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    sw.BorderThickness = new Thickness(isCurrent ? 3 : 1);
+                }
+            }
+
+            foreach (string hex in GroupColorPalette)
+            {
+                string h = hex;
+
+                Button sw =
+                    new Button
+                    {
+                        Tag = h,
+                        Width = 26,
+                        Height = 26,
+                        MinWidth = 0,
+                        MinHeight = 0,
+                        Padding = new Thickness(0),
+                        CornerRadius = new CornerRadius(7),
+                        Background =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                ColorFromHex(h)),
+                        BorderBrush =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(
+                                    255, 58, 46, 40)),
+                        BorderThickness = new Thickness(1)
+                    };
+
+                sw.Click += (s, e) =>
+                {
+                    onPick(h);
+                    Refresh(h);
+                };
+
+                swatches.Add(sw);
+                row.Children.Add(sw);
+            }
+
+            Refresh(initialHex);
+
+            return row;
         }
 
         private void EnsureStickyDefaults()
@@ -5398,6 +5513,28 @@ namespace LochlanProductivity
             content.Children.Add(
                 descriptionBox);
 
+            // New groups can be made at any time (additive). Default
+            // color spreads across the palette as groups grow.
+            string[] newGroupColor =
+            {
+                GroupColorPalette[
+                    groupManager.Groups.Count % GroupColorPalette.Length]
+            };
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Group color",
+                    FontSize = 13,
+                    Opacity = 0.7,
+                    Margin = new Thickness(0, 4, 0, 0)
+                });
+
+            content.Children.Add(
+                BuildGroupColorPicker(
+                    newGroupColor[0],
+                    hex => newGroupColor[0] = hex));
+
             ContentDialog dialog =
                 new ContentDialog
                 {
@@ -5452,9 +5589,13 @@ namespace LochlanProductivity
                 return;
             }
 
-            groupManager.CreateGroup(
-                name,
-                descriptionBox.Text.Trim());
+            AppGroup created =
+                groupManager.CreateGroup(
+                    name,
+                    descriptionBox.Text.Trim());
+
+            created.Color = newGroupColor[0];
+            created.LastModified = DateTime.UtcNow;
 
             await SaveAppGroupsAsync();
         }
@@ -5467,6 +5608,10 @@ namespace LochlanProductivity
             EditAppGroupAsync(
                 AppGroup group)
         {
+            // Explicit dot color; empty = auto (hash). Persists across
+            // loop iterations (add/scan flows rebuild the dialog).
+            string selectedColor = GetGroupHex(group);
+
             while (true)
             {
                 BlockedApp? appToRemove = null;
@@ -5520,6 +5665,20 @@ namespace LochlanProductivity
 
                 content.Children.Add(
                     descriptionBox);
+
+                content.Children.Add(
+                    new TextBlock
+                    {
+                        Text = "Group color",
+                        FontSize = 13,
+                        Opacity = 0.7,
+                        Margin = new Thickness(0, 4, 0, 0)
+                    });
+
+                content.Children.Add(
+                    BuildGroupColorPicker(
+                        selectedColor,
+                        hex => selectedColor = hex));
 
                 if (removalsLocked)
                 {
@@ -5988,11 +6147,34 @@ namespace LochlanProductivity
                     continue;
                 }
 
+                bool colorChanged =
+                    !string.Equals(
+                        group.Color ?? "",
+                        selectedColor,
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool renamed =
+                    !group.Name.Equals(
+                        newName,
+                        StringComparison.Ordinal) ||
+                    !group.Description.Equals(
+                        descriptionBox.Text.Trim(),
+                        StringComparison.Ordinal);
+
                 group.Name =
                     newName;
 
                 group.Description =
                     descriptionBox.Text.Trim();
+
+                group.Color =
+                    selectedColor;
+
+                if (colorChanged || renamed)
+                {
+                    // Stamp so the color/rename propagates via sync.
+                    group.LastModified = DateTime.UtcNow;
+                }
 
                 await SaveAppGroupsAsync();
 
