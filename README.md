@@ -1,20 +1,22 @@
 # Lochlan Productivity
 
-A strict Windows focus app: finish your tasks, or your distractions stay blocked. Free and open source (MIT).
+Vibe coded slop app, but it works for me much better than any productivity app I've tried so maybe it'll help you too. It's meant to fully block apps and websites at your choosing and help with organization of tasks. 
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## What it does
 
-- **Today's Tasks** — add what you must do. While anything is incomplete, Focus Mode stays locked.
-- **App blocking** — assign app groups (or individual EXEs) per task. Blocked apps are closed automatically until their task is done. Adding apps is always allowed; removing them requires all tasks complete.
-- **Website blocking** — blocked sites resolve to `0.0.0.0` via the Windows hosts file while enforcing, with browser secure-DNS disabled so the block can't be bypassed. Embedded YouTube can stay allowed for tutorials.
-- **Daily plan prompt** — once a day the app asks for today's task before anything unlocks (customizable message, can be switched off in Settings).
-- **Schedules** — auto-engage Focus Mode on a timetable (e.g. school nights), with a custom **warning toast** N minutes before each block starts.
-- **Recurring + future tasks** — daily/weekly repeats plus one-shot future planning with a calendar view.
-- **Long-term notes** — checklist or free-writing sticky-note mode, synced.
-- **Sync** — two-way merge across your computers through any shared folder (OneDrive, Syncthing, …).
-- **Themes** — Frost (light), Tapestry (dark botanical), and fully custom colors.
+- **Today's Tasks** — You can add tasks, while those tasks are incomplete the app blocks apps and websites.
+- **App blocking** — assign app groups per tasks. Groups are editable with whatever you'd like. Blocked apps can't be opened during while focus mode is on.
+- **Website blocking** — blocked sites resolve to `0.0.0.0` via the Windows hosts file while enforcing, with browser secure-DNS disabled so the block can't be bypassed. - I don't really know how this works but it does 
+- **Daily plan prompt** — Each day you are prompted to add a task to your list. Toggleable in settings and prompt can be customized. 
+- **Schedules** — Automatically starts blocking on a set schedule. Option to put out a warning notification at a set time before it starts so you know if you have time to queue another counter strike game.
+- **Recurring + future tasks** — You can add tasks that repeat on a schedule or ones that are upcoming. 
+- **Long-term notes** — Another list of tasks with no due dates or just a place to write notes if you prefer. 
+- **Sync** — two-way syncing through any shared folder. I use syncthing but onedrive and others would work. 
+- **Themes** — Color themes if you like them. Also option to add custom ones. I might update these more in the future
+
+- rest below this was written by the robot in my computer 
 
 ## Requirements
 
@@ -52,7 +54,7 @@ Merges are newest-wins per item. Editing the *same* task on both PCs inside one 
 
 ## Privacy
 
-No telemetry, no accounts, no network calls except your own sync folder. Everything lives on your disk:
+Everything is on your computer cause I ain't paying for server space
 
 | Data | Location |
 |---|---|
@@ -76,9 +78,6 @@ dotnet publish LochlanProductivity/LochlanProductivity.csproj -c Release -r win-
 
 No test project; `dotnet build` is the check. See `AGENTS.md` for architecture notes, gotchas (XAML compiler quirks, strict-mode guards), and conventions.
 
-## Contributing
-
-Issues and pull requests welcome. Please keep the strict-mode rule intact: nothing may weaken blocking while tasks are incomplete, except the explicitly additive paths (adding apps/checks).
 
 ## License
 
