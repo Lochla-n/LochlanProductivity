@@ -49,33 +49,16 @@ namespace LochlanProductivity.Services
             // GAMES
             // --------------------------------------------------------
 
+            // Empty shells on purpose: no hardcoded apps. Users add
+            // their own via Manage App Groups (browse / scan running
+            // apps) at any time. Saved groups on disk overwrite these
+            // on load, so existing installs keep their apps.
             AppGroup games = new AppGroup
             {
                 Id = "games",
                 Name = "Games",
                 Description = "Games and game launchers"
             };
-
-            games.Apps.Add(
-                new BlockedApp
-                {
-                    Name = "Steam",
-                    ExecutablePath = "steam.exe"
-                });
-
-            games.Apps.Add(
-                new BlockedApp
-                {
-                    Name = "MTG Arena",
-                    ExecutablePath = "MTGA.exe"
-                });
-
-            games.Apps.Add(
-                new BlockedApp
-                {
-                    Name = "Minecraft",
-                    ExecutablePath = "MinecraftLauncher.exe"
-                });
 
             groups.Add(games);
 
@@ -89,13 +72,6 @@ namespace LochlanProductivity.Services
                 Name = "Social",
                 Description = "Social and communication applications"
             };
-
-            social.Apps.Add(
-                new BlockedApp
-                {
-                    Name = "Discord",
-                    ExecutablePath = "Discord.exe"
-                });
 
             groups.Add(social);
         }

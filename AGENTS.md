@@ -11,7 +11,7 @@ WinUI 3 / Windows App SDK desktop productivity app (`net8.0-windows10.0.19041.0`
 - `LochlanProductivity/Services/` - Core domain:
   - `AppBlockingService.cs` (`Class1.cAppBlockingService.cs`) - process monitoring/killing. `CheckBlockedApps`/`EnforceBlocking` take an effective-apps map (`IReadOnlyDictionary<TodoTask, IReadOnlyList<BlockedApp>>`) and never mutate tasks
   - `TrayIconManager.cs` - Shell_NotifyIcon P/Invoke tray icon (Open/Exit), one instance per process
-  - `AppGroup.cs` / `AppGroupManager.cs` - app groups (stamped `LastModified` on mutations)
+  - `AppGroup.cs` / `AppGroupManager.cs` - app groups (stamped `LastModified` on mutations); default Games/Social groups are empty shells (no hardcoded apps), `availableApps` in `MainWindow.xaml.cs:105` starts empty and is seeded from saved groups/tasks + picker/detect
   - `PolicyManager.cs` - expands groups into effective blocked apps via `GetEffectiveBlockedApps` (pure)
   - `ScheduleManager.cs` / `BlockingSchedule.cs` - scheduled Focus Mode
   - `TaskRecurrenceManager.cs` - recurrence (Daily/EveryNDays/WeeklyDays); `CalculateNextDueDate` fast-forwards missed cycles; `CompleteTask` advances recurring tasks
@@ -35,7 +35,7 @@ No test project currently exists. Verify with `dotnet build` only.
 - **Blocking is enforcement-heavy** - `BlockingTimer_Tick:876` every 1s calls `UpdateScheduledBlockingState`, `EnforceBlocking`, `UpdateBlockingStatus`. `HasIncompleteTasks` locks Focus Mode and blocks editing (`OpenBlockedAppsDialog:1351`, `ManageSchedules_Click:1720` deny when incomplete).
 - **Duplicate EXP handling** - `EnforceBlocking:909` and `UpdateBlockingStatus:975` deduplicate by `ExecutablePath` (case-insensitive) via `GroupBy`.
 - **Persistence** - Tasks: `~/LochlanProductivityData/tasks.json` (`MainWindow.xaml.cs:104`). Daily prompt: atomic write via `.tmp` + `File.Move` in `DailyPromptManager.cs:74`. `Load:97` does NOT overwrite on corrupt file.
-- **Available apps hardcoded** in `MainWindow.xaml.cs:73` (Steam, MTG Arena, Discord, Minecraft) + user-browsed EXEs via `FileOpenPicker`.
+- **Additive blocking edits allowed while locked** - `ManageAppGroups_Click`, `EditAppGroupAsync`, and `OpenBlockedAppsDialog` open even with incomplete tasks: new apps/groups/checks are enabled, but removals (per-app Remove, group Delete, unchecking a blocked box via `IsEnabled=false`) are disabled until Focus is off. `OpenEditTaskDialog` stays fully locked.
 - **Soft delete / tombstones** - `TodoTask.IsDeleted` keeps removed tasks in `tasks.json` so deletions propagate through sync; UI/enforcement filter via `ActiveTasks`; tombstones older than 30 days are purged in `LoadTasksAsync`.
 - **Sync is pull/push on demand** - task mutations do NOT write the shared `syncdata.json`; "Sync Now" merges (Id + `LastModified`, newest wins per item) and writes back, and launch does a silent merge (`SyncOnStartupAsync`) that only refreshes UI when something changed. No auto-sync on mutations.
 - **Save after mutations** - every task add/remove/check/uncheck/edit calls `SaveTasksAsync()` and stamps `LastModified = UtcNow` (merge key for sync).

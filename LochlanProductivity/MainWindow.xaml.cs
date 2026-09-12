@@ -102,32 +102,11 @@ namespace LochlanProductivity
         // AVAILABLE APPLICATIONS
         // ============================================================
 
-        private readonly List<BlockedApp> availableApps = new()
-        {
-            new BlockedApp
-            {
-                Name = "Steam",
-                ExecutablePath = "steam.exe"
-            },
-
-            new BlockedApp
-            {
-                Name = "MTG Arena",
-                ExecutablePath = "MTGA.exe"
-            },
-
-            new BlockedApp
-            {
-                Name = "Discord",
-                ExecutablePath = "Discord.exe"
-            },
-
-            new BlockedApp
-            {
-                Name = "Minecraft",
-                ExecutablePath = "MinecraftLauncher.exe"
-            }
-        };
+        // Intentionally NOT hardcoded: seeded at runtime from saved
+        // groups (LoadAppGroupsAsync), saved tasks (LoadTasksAsync),
+        // the file picker, and running-app detection. Add your own
+        // apps via Manage App Groups at any time.
+        private readonly List<BlockedApp> availableApps = new();
 
         // ============================================================
         // SAVE FILES
@@ -3436,14 +3415,10 @@ namespace LochlanProductivity
         private async void OpenBlockedAppsDialog(
             TodoTask task)
         {
-            if (HasIncompleteTasks)
-            {
-                await ShowSimpleMessageAsync(
-                    "Blocked app settings are locked while tasks are incomplete.\n\n" +
-                    "Complete all tasks before changing blocking settings.");
-
-                return;
-            }
+            // Additions are allowed at any time (strengthening blocking
+            // is never a bypass). Unchecking / removing stays locked
+            // while tasks are incomplete - already-blocked stays blocked.
+            bool locked = HasIncompleteTasks;
 
             StackPanel panel =
                 new StackPanel
@@ -3455,8 +3430,12 @@ namespace LochlanProductivity
                 new TextBlock
                 {
                     Text =
-                        "Choose app groups and individual applications " +
-                        "that should be blocked until this task is completed.",
+                        locked
+                            ? "Tasks are incomplete: you can add more apps " +
+                              "to block, but already-blocked apps and groups " +
+                              "cannot be unchecked until Focus Mode is off."
+                            : "Choose app groups and individual applications " +
+                              "that should be blocked until this task is completed.",
 
                     TextWrapping =
                         TextWrapping.Wrap,
@@ -3516,7 +3495,12 @@ namespace LochlanProductivity
                                   group.Description,
 
                         IsChecked =
-                            selected
+                            selected,
+
+                        // Locked + already blocked = cannot uncheck.
+                        // Unchecked groups can still be added.
+                        IsEnabled =
+                            !locked || !selected
                     };
 
                 groupCheckBoxes.Add(
@@ -4716,7 +4700,12 @@ namespace LochlanProductivity
                         appContent,
 
                     IsChecked =
-                        checkedByDefault
+                        checkedByDefault,
+
+                    // Locked + already blocked = cannot uncheck.
+                    // New (unchecked) apps can still be added.
+                    IsEnabled =
+                        !(checkedByDefault && HasIncompleteTasks)
                 };
 
             checkBoxes.Add(
@@ -4918,15 +4907,9 @@ namespace LochlanProductivity
             object sender,
             RoutedEventArgs e)
         {
-            if (HasIncompleteTasks)
-            {
-                await ShowSimpleMessageAsync(
-                    "App group settings are locked while tasks are incomplete.\n\n" +
-                    "Complete all tasks before changing app groups.");
-
-                return;
-            }
-
+            // Additions are allowed at any time (strengthening blocking
+            // is never a bypass). Removals and group deletions stay
+            // locked while tasks are incomplete - see EditAppGroupAsync.
             while (true)
             {
                 AppGroup? selectedGroup = null;
@@ -4951,6 +4934,26 @@ namespace LochlanProductivity
 
                         Opacity = 0.75
                     });
+
+                if (HasIncompleteTasks)
+                {
+                    content.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                "Tasks are incomplete: you can add apps and " +
+                                "groups, but removing apps or deleting groups " +
+                                "is locked until Focus Mode is off.",
+
+                            TextWrapping =
+                                TextWrapping.Wrap,
+
+                            Opacity = 0.85,
+
+                            FontWeight =
+                                Microsoft.UI.Text.FontWeights.SemiBold
+                        });
+                }
 
                 StackPanel groupList =
                     new StackPanel
@@ -5281,6 +5284,11 @@ namespace LochlanProductivity
 
                 bool deleteGroup = false;
 
+                // Removals weaken blocking, so they stay locked while
+                // tasks are incomplete. Additions (browse/scan/create)
+                // are always allowed.
+                bool removalsLocked = HasIncompleteTasks;
+
                 StackPanel content =
                     new StackPanel
                     {
@@ -5319,6 +5327,26 @@ namespace LochlanProductivity
 
                 content.Children.Add(
                     descriptionBox);
+
+                if (removalsLocked)
+                {
+                    content.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                "Tasks are incomplete: removing apps or " +
+                                "deleting this group is locked until " +
+                                "Focus Mode is off. Adding apps still works.",
+
+                            TextWrapping =
+                                TextWrapping.Wrap,
+
+                            Opacity = 0.85,
+
+                            FontWeight =
+                                Microsoft.UI.Text.FontWeights.SemiBold
+                        });
+                }
 
                 content.Children.Add(
                     new TextBlock
@@ -5412,7 +5440,10 @@ namespace LochlanProductivity
                         new Button
                         {
                             Content =
-                                "Remove"
+                                "Remove",
+
+                            IsEnabled =
+                                !removalsLocked
                         };
 
                     Grid.SetColumn(
@@ -5514,7 +5545,12 @@ namespace LochlanProductivity
                     new Button
                     {
                         Content =
-                            "Delete Group",
+                            removalsLocked
+                                ? "Delete Group (locked until Focus Mode is off)"
+                                : "Delete Group",
+
+                        IsEnabled =
+                            !removalsLocked,
 
                         HorizontalAlignment =
                             HorizontalAlignment.Left,
@@ -5653,6 +5689,15 @@ namespace LochlanProductivity
 
                 if (deleteGroup)
                 {
+                    if (removalsLocked)
+                    {
+                        await ShowSimpleMessageAsync(
+                            "Deleting groups is locked while tasks are " +
+                            "incomplete.\n\nComplete all tasks first.");
+
+                        continue;
+                    }
+
                     bool confirmed =
                         await ShowConfirmationAsync(
                             "Delete Group",
@@ -5691,6 +5736,15 @@ namespace LochlanProductivity
 
                 if (appToRemove != null)
                 {
+                    if (removalsLocked)
+                    {
+                        await ShowSimpleMessageAsync(
+                            "Removing apps is locked while tasks are " +
+                            "incomplete.\n\nComplete all tasks first.");
+
+                        continue;
+                    }
+
                     groupManager.RemoveAppFromGroup(
                         group.Id,
                         appToRemove.ExecutablePath);
