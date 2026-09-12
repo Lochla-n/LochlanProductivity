@@ -2173,6 +2173,212 @@ namespace LochlanProductivity
             _ = OpenPlanFutureTaskDialogAsync();
         }
 
+        private void CalendarViewButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            _ = OpenCalendarViewDialogAsync();
+        }
+
+        // Month view of upcoming + recurring tasks (read-only).
+        // Days with due tasks get a sage density dot; tapping a day
+        // lists what's due (one-shots and recurring alike).
+        private async System.Threading.Tasks.Task OpenCalendarViewDialogAsync()
+        {
+            Windows.UI.Color densityColor =
+                Microsoft.UI.ColorHelper.FromArgb(255, 138, 154, 139);
+
+            bool HasTasksOn(DateTime day) =>
+                ActiveTasks.Any(
+                    task =>
+                        !task.IsLongTerm &&
+                        task.DueDate.Date == day);
+
+            CalendarView calendar =
+                new CalendarView
+                {
+                    SelectionMode = CalendarViewSelectionMode.Single,
+                    IsOutOfScopeEnabled = true,
+                    IsGroupLabelVisible = true,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+
+            calendar.CalendarViewDayItemChanging += (s, e) =>
+            {
+                try
+                {
+                    if (HasTasksOn(e.Item.Date.Date))
+                    {
+                        e.Item.SetDensityColors(
+                            new[] { densityColor });
+                    }
+                    else
+                    {
+                        e.Item.SetDensityColors(
+                            Array.Empty<Windows.UI.Color>());
+                    }
+                }
+                catch
+                {
+                }
+            };
+
+            TextBlock dayHeader =
+                new TextBlock
+                {
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 58, 46, 40))
+                };
+
+            StackPanel details =
+                new StackPanel
+                {
+                    Spacing = 6
+                };
+
+            void RefreshDetails(DateTime day)
+            {
+                dayHeader.Text = day.ToString("dddd, MMM d");
+
+                details.Children.Clear();
+
+                List<TodoTask> dueToday = ActiveTasks
+                    .Where(
+                        task =>
+                            !task.IsLongTerm &&
+                            task.DueDate.Date == day)
+                    .OrderBy(task => task.IsCompleted)
+                    .ThenByDescending(task => (int)task.Priority)
+                    .ThenBy(
+                        task => task.Title,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (dueToday.Count == 0)
+                {
+                    details.Children.Add(
+                        new TextBlock
+                        {
+                            Text = "No tasks due this day.",
+                            Opacity = 0.55,
+                            FontSize = 12,
+                            FontStyle = Windows.UI.Text.FontStyle.Italic
+                        });
+
+                    return;
+                }
+
+                foreach (TodoTask task in dueToday)
+                {
+                    StackPanel row =
+                        new StackPanel
+                        {
+                            Spacing = 1
+                        };
+
+                    row.Children.Add(
+                        new TextBlock
+                        {
+                            Text =
+                                (task.IsCompleted ? "✓ " : "• ") +
+                                task.Title,
+                            FontSize = 14,
+                            FontFamily =
+                                new Microsoft.UI.Xaml.Media.FontFamily(
+                                    "Cambria"),
+                            Foreground =
+                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                    Microsoft.UI.ColorHelper.FromArgb(
+                                        255, 58, 46, 40)),
+                            Opacity = task.IsCompleted ? 0.55 : 1.0,
+                            TextWrapping = TextWrapping.Wrap
+                        });
+
+                    List<string> meta = new();
+
+                    if (task.IsRecurring)
+                    {
+                        meta.Add(
+                            taskRecurrenceManager
+                                .GetRecurrenceDescription(task));
+                    }
+
+                    if (task.DueTimeOfDay != null)
+                    {
+                        meta.Add(
+                            $"due {GetEffectiveDeadline(task):t}");
+                    }
+
+                    if (meta.Count > 0)
+                    {
+                        row.Children.Add(
+                            new TextBlock
+                            {
+                                Text = string.Join(" · ", meta),
+                                FontSize = 11,
+                                Foreground =
+                                    new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                        Microsoft.UI.ColorHelper.FromArgb(
+                                            255, 107, 94, 82)),
+                                Opacity = 0.85
+                            });
+                    }
+
+                    details.Children.Add(row);
+                }
+            }
+
+            calendar.SelectedDatesChanged += (s, e) =>
+            {
+                DateTime day =
+                    calendar.SelectedDates.Count > 0
+                        ? calendar.SelectedDates[0].Date
+                        : DateTime.Today;
+
+                RefreshDetails(day);
+            };
+
+            DateTime today = DateTime.Today;
+
+            calendar.SelectedDates.Add(new DateTimeOffset(today));
+
+            RefreshDetails(today);
+
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            content.Children.Add(calendar);
+            content.Children.Add(dayHeader);
+            content.Children.Add(
+                new ScrollViewer
+                {
+                    Content = details,
+                    MaxHeight = 220,
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto
+                });
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Upcoming & Recurring",
+                    Content = content,
+                    CloseButtonText = "Close",
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+            await dialog.ShowAsync();
+        }
+
         // One-shot future planning (not recurring): title + the same
         // color-dot group toggles as the quick-add strip + a calendar
         // to tap the day. Lands in Coming Up until its day arrives.

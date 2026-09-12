@@ -35,6 +35,7 @@
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Button Content="+ Future" FontSize="12" Padding="10,4" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" VerticalAlignment="Center" Click="PlanFutureTask_Click" ToolTipService.ToolTip="Plan a one-time task for a future day"/>
+                <Button Content="Calendar" FontSize="12" Padding="10,4" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="CalendarViewButton_Click" ToolTipService.ToolTip="See upcoming and recurring tasks by day"/>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <Ellipse x:Name="SyncStatusDot" Width="8" Height="8" Fill="#FF8A9A8B" VerticalAlignment="Center"/>
                     <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" FontFamily="Segoe UI Variable Small" Foreground="#FF6B5E52" VerticalAlignment="Center"/>
