@@ -50,6 +50,9 @@ namespace LochlanProductivity.Services
         // sticky-note area.
         public bool UseStickyNoteMode { get; set; } = false;
 
+        // "Frost" or "Tapestry" (see AppThemePalette.All for more).
+        public string ThemeName { get; set; } = "Frost";
+
         // When true, youtube-related CDN/media domains are NOT blocked
         // via hosts so embedded players keep working while
         // youtube.com itself remains blocked for direct navigation.
@@ -95,7 +98,10 @@ namespace LochlanProductivity.Services
                                 DailyPromptMessage,
 
                             UseStickyNoteMode =
-                                UseStickyNoteMode
+                                UseStickyNoteMode,
+
+                            ThemeName =
+                                ThemeName
                         },
                         new JsonSerializerOptions
                         {
@@ -161,6 +167,11 @@ namespace LochlanProductivity.Services
                 UseStickyNoteMode =
                     loaded.UseStickyNoteMode;
 
+                if (!string.IsNullOrWhiteSpace(loaded.ThemeName))
+                {
+                    ThemeName = loaded.ThemeName!;
+                }
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -202,6 +213,8 @@ namespace LochlanProductivity.Services
             public string? DailyPromptMessage { get; set; }
 
             public bool UseStickyNoteMode { get; set; } = false;
+
+            public string? ThemeName { get; set; }
         }
     }
 }

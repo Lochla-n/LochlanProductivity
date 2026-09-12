@@ -14,7 +14,7 @@
         <MicaBackdrop Kind="BaseAlt"/>
     </Window.SystemBackdrop>
 
-    <Grid Background="#99F2F3F0" Padding="28">
+    <Grid x:Name="RootGrid" Background="#99F2F3F0" Padding="28">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -31,16 +31,16 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Text="Today's Tasks" FontSize="30" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
+                <TextBlock x:Name="TitleText" Text="Today's Tasks" FontSize="30" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <Button Content="+ Future" FontSize="13" Padding="14,6" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" VerticalAlignment="Center" Click="PlanFutureTask_Click" ToolTipService.ToolTip="Plan a one-time task for a future day"/>
-                <Button Content="Calendar" FontSize="13" Padding="14,6" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="CalendarViewButton_Click" ToolTipService.ToolTip="See upcoming and recurring tasks by day"/>
+                <Button x:Name="FutureButton" Content="+ Future" FontSize="13" Padding="14,6" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" VerticalAlignment="Center" Click="PlanFutureTask_Click" ToolTipService.ToolTip="Plan a one-time task for a future day"/>
+                <Button x:Name="CalendarButton" Content="Calendar" FontSize="13" Padding="14,6" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="CalendarViewButton_Click" ToolTipService.ToolTip="See upcoming and recurring tasks by day"/>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <Ellipse x:Name="SyncStatusDot" Width="8" Height="8" Fill="#FF8A9A8B" VerticalAlignment="Center"/>
                     <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" FontFamily="Segoe UI Variable Small" Foreground="#FF6B5E52" VerticalAlignment="Center"/>
                 </StackPanel>
-                <Button Content="..." FontSize="16" Padding="10,4" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF3A2E28" CornerRadius="8">
+                <Button x:Name="OptionsButton" Content="..." FontSize="16" Padding="10,4" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF3A2E28" CornerRadius="8">
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="App Groups" Click="ManageAppGroups_Click"/>
@@ -59,8 +59,8 @@
         </Grid>
 
         <!-- FOCUS CARD — frost glass (semi-transparent over Mica) -->
-        <Border Grid.Row="1" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="14" Padding="16">
-            <Border BorderBrush="#FF8E7D6B" BorderThickness="4,0,0,0" CornerRadius="8" Padding="12,2,0,2">
+        <Border x:Name="FocusCard" Grid.Row="1" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="14" Padding="16">
+            <Border x:Name="FocusAccent" BorderBrush="#FF8E7D6B" BorderThickness="4,0,0,0" CornerRadius="8" Padding="12,2,0,2">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -87,7 +87,7 @@
         </Border>
 
         <!-- TASK INPUT — frost glass -->
-        <Border Grid.Row="3" Margin="0,14,0,14" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
+        <Border x:Name="TaskInputBorder" Grid.Row="3" Margin="0,14,0,14" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -97,7 +97,7 @@
                 <TextBox x:Name="TaskInput" Grid.Column="0" PlaceholderText="What do you need to do?" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="TaskInput_KeyDown"/>
                 <!-- Sticky group check-off: one color dot per app group, left of Add -->
                 <StackPanel x:Name="TaskGroupStrip" Grid.Column="1" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center" Margin="10,0,0,0"/>
-                <Button Grid.Column="2" Content="Add" Margin="10,0,0,0" Click="AddTask_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="16,6"/>
+                <Button x:Name="AddTaskButton" Grid.Column="2" Content="Add" Margin="10,0,0,0" Click="AddTask_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="16,6"/>
             </Grid>
         </Border>
 
@@ -119,7 +119,7 @@
             <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="18">
                     <StackPanel x:Name="LongTermSection" Spacing="8">
-                        <TextBlock Text="Long-term &amp; Notes" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
+                        <TextBlock x:Name="LongTermTitle" Text="Long-term &amp; Notes" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
                         <Border x:Name="LongTermInputRow" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -127,7 +127,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBox x:Name="LongTermInput" Grid.Column="0" PlaceholderText="Add a long-term goal or note…" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="LongTermInput_KeyDown"/>
-                                <Button Grid.Column="1" Content="Add Note" Margin="10,0,0,0" Click="AddLongTerm_Click" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
+                                <Button x:Name="AddNoteButton" Grid.Column="1" Content="Add Note" Margin="10,0,0,0" Click="AddLongTerm_Click" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
                             </Grid>
                         </Border>
                         <ScrollViewer x:Name="LongTermListScroll" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -137,8 +137,8 @@
                     </StackPanel>
 
                     <StackPanel x:Name="FutureSection" Spacing="8">
-                        <TextBlock Text="Coming Up" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
-                        <TextBlock Text="Tasks scheduled for the future — they’ll appear unmarked on their day." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="FutureTitle" Text="Coming Up" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
+                        <TextBlock x:Name="FutureSubtitle" Text="Tasks scheduled for the future — they’ll appear unmarked on their day." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
                         <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="FutureTaskList" Spacing="10"/>
                         </ScrollViewer>

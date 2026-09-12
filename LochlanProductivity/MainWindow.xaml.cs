@@ -514,6 +514,12 @@ namespace LochlanProductivity
             // swapped for the writing area in Settings).
             LoadLongTermNote();
 
+            // Load the theme before first paint of the lists.
+            currentTheme =
+                AppThemePalette.FromName(appSettings.ThemeName);
+
+            ApplyTheme();
+
             // Activate recurring tasks that have become due.
             taskRecurrenceManager.UpdateRecurringTasks(
                 ActiveTasks.ToList());
@@ -2439,8 +2445,7 @@ namespace LochlanProductivity
         // lists what's due (one-shots and recurring alike).
         private async System.Threading.Tasks.Task OpenCalendarViewDialogAsync()
         {
-            Windows.UI.Color densityColor =
-                Microsoft.UI.ColorHelper.FromArgb(255, 138, 154, 139);
+            Windows.UI.Color densityColor = currentTheme.DensityDot;
 
             bool HasTasksOn(DateTime day) =>
                 ActiveTasks.Any(
@@ -2484,10 +2489,7 @@ namespace LochlanProductivity
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     FontFamily =
                         new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 58, 46, 40))
+                    Foreground = TB(currentTheme.InkText)
                 };
 
             StackPanel details =
@@ -2523,10 +2525,7 @@ namespace LochlanProductivity
                             Opacity = 0.7,
                             FontSize = 12,
                             FontStyle = Windows.UI.Text.FontStyle.Italic,
-                            Foreground =
-                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    Microsoft.UI.ColorHelper.FromArgb(
-                                        255, 107, 94, 82))
+                            Foreground = TB(currentTheme.MutedText)
                         });
 
                     return;
@@ -2550,10 +2549,7 @@ namespace LochlanProductivity
                             FontFamily =
                                 new Microsoft.UI.Xaml.Media.FontFamily(
                                     "Cambria"),
-                            Foreground =
-                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    Microsoft.UI.ColorHelper.FromArgb(
-                                        255, 58, 46, 40)),
+                            Foreground = TB(currentTheme.InkText),
                             Opacity = task.IsCompleted ? 0.55 : 1.0,
                             TextWrapping = TextWrapping.Wrap
                         });
@@ -2580,10 +2576,7 @@ namespace LochlanProductivity
                             {
                                 Text = string.Join(" · ", meta),
                                 FontSize = 11,
-                                Foreground =
-                                    new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                        Microsoft.UI.ColorHelper.FromArgb(
-                                            255, 107, 94, 82)),
+                                Foreground = TB(currentTheme.MutedText),
                                 Opacity = 0.85
                             });
                     }
@@ -2632,10 +2625,7 @@ namespace LochlanProductivity
                     Content = content,
                     CloseButtonText = "Close",
                     XamlRoot = this.Content.XamlRoot,
-                    // Force light: the hardcoded ink text and the
-                    // native month grid both wash out when Windows
-                    // is in dark mode.
-                    RequestedTheme = ElementTheme.Light
+                    RequestedTheme = CurrentDialogTheme
                 };
 
             await dialog.ShowAsync();
@@ -2757,9 +2747,7 @@ namespace LochlanProductivity
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = this.Content.XamlRoot,
-                    // Force light so the ink text and calendar stay
-                    // readable even when Windows is in dark mode.
-                    RequestedTheme = ElementTheme.Light
+                    RequestedTheme = CurrentDialogTheme
                 };
 
             titleBox.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
@@ -2911,6 +2899,79 @@ namespace LochlanProductivity
         // TASK LIST
         // ============================================================
 
+        // ============================================================
+        // THEME
+        // ============================================================
+
+        private AppThemePalette currentTheme = AppThemePalette.Frost;
+
+        private static Microsoft.UI.Xaml.Media.SolidColorBrush TB(
+            Windows.UI.Color color) =>
+            new Microsoft.UI.Xaml.Media.SolidColorBrush(color);
+
+        private ElementTheme CurrentDialogTheme =>
+            currentTheme.IsDark ? ElementTheme.Dark : ElementTheme.Light;
+
+        private void ApplyTheme()
+        {
+            AppThemePalette t = currentTheme;
+
+            RootGrid.Background = TB(t.WindowBackground);
+            RootGrid.RequestedTheme = CurrentDialogTheme;
+
+            TitleText.Foreground = TB(t.InkText);
+
+            FutureButton.Background = TB(t.PrimaryButton);
+            FutureButton.Foreground = TB(t.PrimaryButtonText);
+
+            CalendarButton.Background = TB(t.CardBackground);
+            CalendarButton.BorderBrush = TB(t.CardBorder);
+            CalendarButton.Foreground = TB(t.InkText);
+
+            OptionsButton.Background = TB(t.CardBackground);
+            OptionsButton.BorderBrush = TB(t.CardBorder);
+            OptionsButton.Foreground = TB(t.InkText);
+
+            SyncStatusText.Foreground = TB(t.MutedText);
+            SyncStatusDot.Fill = TB(t.SyncDot);
+
+            FocusCard.Background = TB(t.CardBackground);
+            FocusCard.BorderBrush = TB(t.CardBorder);
+            FocusAccent.BorderBrush = TB(t.AccentBar);
+            BlockingStatusText.Foreground = TB(t.InkText);
+            BlockedAppStatusText.Foreground = TB(t.MutedText);
+            BlockingButton.Background = TB(t.PrimaryButton);
+            BlockingButton.Foreground = TB(t.PrimaryButtonText);
+
+            BlockedAppNotification.Background =
+                TB(t.NotificationBackground);
+            BlockedAppNotification.BorderBrush = TB(t.NotificationBorder);
+            BlockedAppNotificationTitle.Foreground = TB(t.InkText);
+            BlockedAppNotificationMessage.Foreground = TB(t.MutedText);
+
+            TaskInputBorder.Background = TB(t.CardBackground);
+            TaskInputBorder.BorderBrush = TB(t.CardBorder);
+            TaskInput.Background = TB(t.InputBackground);
+            TaskInput.BorderBrush = TB(t.InputBorder);
+            TaskInput.Foreground = TB(t.InkText);
+            AddTaskButton.Background = TB(t.PrimaryButton);
+            AddTaskButton.Foreground = TB(t.PrimaryButtonText);
+
+            LongTermTitle.Foreground = TB(t.InkText);
+            FutureTitle.Foreground = TB(t.InkText);
+            FutureSubtitle.Foreground = TB(t.MutedText);
+            LongTermInputRow.Background = TB(t.CardBackground);
+            LongTermInputRow.BorderBrush = TB(t.CardBorder);
+            LongTermInput.Background = TB(t.InputBackground);
+            LongTermInput.BorderBrush = TB(t.InputBorder);
+            LongTermInput.Foreground = TB(t.InkText);
+            AddNoteButton.Background = TB(t.SecondaryButton);
+            AddNoteButton.Foreground = TB(t.SecondaryButtonText);
+            LongTermNoteBox.Background = TB(t.CardBackground);
+            LongTermNoteBox.BorderBrush = TB(t.CardBorder);
+            LongTermNoteBox.Foreground = TB(t.InkText);
+        }
+
         private void RefreshTaskList()
         {
             TaskList.Children.Clear();
@@ -2954,25 +3015,20 @@ namespace LochlanProductivity
                 Border card =
                     new Border
                     {
-                        // Semi-transparent frost glass — lets Mica show through
-                        Background =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(204, 250, 251, 249)),
-                        BorderBrush =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        // Semi-transparent glass — lets Mica show through
+                        Background = TB(currentTheme.CardBackground),
+                        BorderBrush = TB(currentTheme.CardBorder),
                         BorderThickness = new Thickness(1),
                         CornerRadius = new CornerRadius(12),
                         Padding = new Thickness(4),
                         Margin = new Thickness(0)
                     };
 
-                // Left wood accent for incomplete tasks
+                // Accent border for incomplete tasks
                 if (!task.IsCompleted)
                 {
                     card.BorderBrush =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(255, 142, 125, 107));
+                        TB(currentTheme.IncompleteCardBorder);
                     card.BorderThickness = new Thickness(1, 1, 1, 1);
                 }
 
@@ -3030,9 +3086,7 @@ namespace LochlanProductivity
                         FontFamily =
                             new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
 
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 58, 46, 40)),
+                        Foreground = TB(currentTheme.InkText),
 
                         TextWrapping =
                             TextWrapping.Wrap
@@ -3051,9 +3105,7 @@ namespace LochlanProductivity
                         FontFamily =
                             new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI Variable Text"),
 
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 107, 94, 82)),
+                        Foreground = TB(currentTheme.MutedText),
 
                         Opacity = 0.9,
 
@@ -3070,9 +3122,7 @@ namespace LochlanProductivity
                 {
                     metaText.Opacity = 1;
 
-                    metaText.Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.Colors.OrangeRed);
+                    metaText.Foreground = TB(currentTheme.OverdueText);
                 }
 
                 CheckBox checkBox =
@@ -3170,15 +3220,9 @@ namespace LochlanProductivity
                                 6,
                                 0),
 
-                        Background =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)),
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)),
-                        BorderBrush =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        Background = TB(currentTheme.SecondaryButton),
+                        Foreground = TB(currentTheme.SecondaryButtonText),
+                        BorderBrush = TB(currentTheme.CardBorder),
                         CornerRadius = new CornerRadius(8),
                         Padding = new Thickness(10, 4, 10, 4)
                     };
@@ -3213,15 +3257,9 @@ namespace LochlanProductivity
                                 6,
                                 0),
 
-                        Background =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 242, 243, 240)),
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 90, 100, 96)),
-                        BorderBrush =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                        Background = TB(currentTheme.GhostButton),
+                        Foreground = TB(currentTheme.GhostButtonText),
+                        BorderBrush = TB(currentTheme.GhostButtonBorder),
                         CornerRadius = new CornerRadius(8),
                         Padding = new Thickness(10, 4, 10, 4)
                     };
@@ -3249,15 +3287,9 @@ namespace LochlanProductivity
                         VerticalAlignment =
                             VerticalAlignment.Center,
 
-                        Background =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)),
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)),
-                        BorderBrush =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(255, 232, 207, 207)),
+                        Background = TB(currentTheme.DangerButton),
+                        Foreground = TB(currentTheme.DangerButtonText),
+                        BorderBrush = TB(currentTheme.DangerButtonBorder),
                         CornerRadius = new CornerRadius(8),
                         Padding = new Thickness(10, 4, 10, 4)
                     };
@@ -3288,8 +3320,8 @@ namespace LochlanProductivity
             {
                 Border card = new Border
                 {
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(180, 250, 251, 249)),
-                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)),
+                    Background = TB(currentTheme.CardBackground),
+                    BorderBrush = TB(currentTheme.CardBorder),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(12),
                     Padding = new Thickness(4),
@@ -3307,7 +3339,7 @@ namespace LochlanProductivity
                     Text = task.Title,
                     FontSize = 15,
                     FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 90, 100, 96)),
+                    Foreground = TB(currentTheme.GhostButtonText),
                     TextWrapping = TextWrapping.Wrap,
                     Opacity = 0.9
                 };
@@ -3316,7 +3348,7 @@ namespace LochlanProductivity
                 {
                     Text = $"Due {task.DueDate:d}" + (task.IsRecurring ? $" · {taskRecurrenceManager.GetRecurrenceDescription(task)}" : ""),
                     FontSize = 11,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 107, 94, 82)),
+                    Foreground = TB(currentTheme.MutedText),
                     Opacity = 0.8
                 };
 
@@ -3328,15 +3360,15 @@ namespace LochlanProductivity
                 {
                     Text = task.DueDate.ToString("MMM d"),
                     FontSize = 11,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 142, 125, 107)),
+                    Foreground = TB(currentTheme.AccentBar),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(12, 0, 6, 0)
                 };
 
-                Button editBtn = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)), BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 221, 227, 224)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+                Button editBtn = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = TB(currentTheme.SecondaryButton), Foreground = TB(currentTheme.SecondaryButtonText), BorderBrush = TB(currentTheme.CardBorder), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
                 editBtn.Click += (s, e) => OpenEditTaskDialog(task);
 
-                Button rmBtn = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)), BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 207, 207)), VerticalAlignment = VerticalAlignment.Center };
+                Button rmBtn = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = TB(currentTheme.DangerButton), Foreground = TB(currentTheme.DangerButtonText), BorderBrush = TB(currentTheme.DangerButtonBorder), VerticalAlignment = VerticalAlignment.Center };
                 rmBtn.Click += (s, e) => RemoveTask(task);
 
                 Grid.SetColumn(sp, 0);
@@ -3366,8 +3398,8 @@ namespace LochlanProductivity
             {
                 Border card = new Border
                 {
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(204, 242, 243, 240)),
-                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 210, 220, 210)),
+                    Background = TB(currentTheme.NoteCardBackground),
+                    BorderBrush = TB(currentTheme.NoteCardBorder),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(12),
                     Padding = new Thickness(4)
@@ -3384,7 +3416,7 @@ namespace LochlanProductivity
                     Text = task.Title,
                     FontSize = 15,
                     FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 58, 70, 60)),
+                    Foreground = TB(currentTheme.InkText),
                     TextWrapping = TextWrapping.Wrap
                 };
 
@@ -3392,7 +3424,7 @@ namespace LochlanProductivity
                 {
                     Text = task.IsCompleted ? "Done" : "Note",
                     FontSize = 11,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 107, 124, 110)),
+                    Foreground = TB(currentTheme.MutedText),
                     Opacity = 0.8
                 };
 
@@ -3410,10 +3442,10 @@ namespace LochlanProductivity
                 chk.Checked += async (s, e) => { task.IsCompleted = true; task.LastModified = DateTime.UtcNow; await SaveTasksAsync(); RefreshTaskList(); };
                 chk.Unchecked += async (s, e) => { task.IsCompleted = false; task.LastModified = DateTime.UtcNow; await SaveTasksAsync(); RefreshTaskList(); };
 
-                Button editBtn2 = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 232, 236, 232)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 46, 52, 64)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 6, 0) };
+                Button editBtn2 = new Button { Content = "Edit", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = TB(currentTheme.SecondaryButton), Foreground = TB(currentTheme.SecondaryButtonText), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 6, 0) };
                 editBtn2.Click += (s, e) => OpenEditTaskDialog(task);
 
-                Button rmBtn2 = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 240)), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 166, 93, 60)), VerticalAlignment = VerticalAlignment.Center };
+                Button rmBtn2 = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(8), Background = TB(currentTheme.DangerButton), Foreground = TB(currentTheme.DangerButtonText), VerticalAlignment = VerticalAlignment.Center };
                 rmBtn2.Click += (s, e) => RemoveTask(task);
 
                 Grid.SetColumn(chk, 0);
@@ -7965,11 +7997,10 @@ namespace LochlanProductivity
 
                 if (SyncStatusDot != null)
                 {
-                    SyncStatusDot.Fill =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            syncing
-                                ? Microsoft.UI.ColorHelper.FromArgb(255, 196, 184, 172)
-                                : Microsoft.UI.ColorHelper.FromArgb(255, 138, 154, 139));
+                    SyncStatusDot.Fill = TB(
+                        syncing
+                            ? currentTheme.SyncDotBusy
+                            : currentTheme.SyncDot);
                 }
             }
             catch
@@ -8013,10 +8044,7 @@ namespace LochlanProductivity
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     FontFamily =
                         new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 58, 46, 40))
+                    Foreground = TB(currentTheme.InkText)
                 });
 
             StartupState startupState =
@@ -8037,10 +8065,7 @@ namespace LochlanProductivity
                     FontSize = 11,
                     Opacity = 0.7,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 107, 94, 82)),
+                    Foreground = TB(currentTheme.MutedText),
                     Text = startupState switch
                     {
                         StartupState.DisabledByPolicy =>
@@ -8102,10 +8127,7 @@ namespace LochlanProductivity
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     FontFamily =
                         new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 58, 46, 40))
+                    Foreground = TB(currentTheme.InkText)
                 });
 
             TextBox dailyMessageBox =
@@ -8137,10 +8159,7 @@ namespace LochlanProductivity
                         FontSize = 11,
                         Opacity = 0.7,
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground =
-                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Microsoft.UI.ColorHelper.FromArgb(
-                                    255, 107, 94, 82)),
+                        Foreground = TB(currentTheme.MutedText),
                         Text = "Turning this off requires all tasks " +
                                "to be complete first."
                     };
@@ -8195,10 +8214,7 @@ namespace LochlanProductivity
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     FontFamily =
                         new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 58, 46, 40))
+                    Foreground = TB(currentTheme.InkText)
                 });
 
             ToggleSwitch stickyNoteToggle =
@@ -8218,10 +8234,7 @@ namespace LochlanProductivity
                     FontSize = 11,
                     Opacity = 0.7,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(
-                                255, 107, 94, 82))
+                    Foreground = TB(currentTheme.MutedText)
                 });
 
             bool updatingSticky = false;
@@ -8248,6 +8261,70 @@ namespace LochlanProductivity
             };
 
             // ----------------------------------------------------
+            // THEME
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Theme",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground = TB(currentTheme.InkText)
+                });
+
+            StackPanel themeOptions =
+                new StackPanel
+                {
+                    Spacing = 4
+                };
+
+            foreach (AppThemePalette palette in AppThemePalette.All)
+            {
+                RadioButton themeRadio =
+                    new RadioButton
+                    {
+                        Content =
+                            $"{palette.DisplayName} — " +
+                            $"{palette.Description}",
+                        IsChecked =
+                            string.Equals(
+                                currentTheme.Name,
+                                palette.Name,
+                                StringComparison.OrdinalIgnoreCase),
+                        GroupName = "AppThemeChoice"
+                    };
+
+                themeRadio.Checked += (s, e) =>
+                {
+                    appSettings.ThemeName = palette.Name;
+                    appSettings.Save();
+
+                    currentTheme = palette;
+
+                    ApplyTheme();
+                    RefreshTaskList();
+                    UpdateBlockingStatus();
+                };
+
+                themeOptions.Children.Add(themeRadio);
+            }
+
+            content.Children.Add(themeOptions);
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "More themes and custom colors later.",
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = TB(currentTheme.MutedText)
+                });
+
+            // ----------------------------------------------------
             // FUTURE SETTINGS GO HERE (new sections above this line)
             // ----------------------------------------------------
 
@@ -8264,7 +8341,7 @@ namespace LochlanProductivity
                     },
                     CloseButtonText = "Close",
                     XamlRoot = this.Content.XamlRoot,
-                    RequestedTheme = ElementTheme.Light
+                    RequestedTheme = CurrentDialogTheme
                 };
 
             await dialog.ShowAsync();
