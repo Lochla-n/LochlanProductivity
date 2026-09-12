@@ -50,8 +50,18 @@ namespace LochlanProductivity.Services
         // sticky-note area.
         public bool UseStickyNoteMode { get; set; } = false;
 
-        // "Frost" or "Tapestry" (see AppThemePalette.All for more).
+        // "Frost", "Tapestry", or "Custom" (see AppThemePalette.All
+        // for presets; custom colors live below).
         public string ThemeName { get; set; } = "Frost";
+
+        // Custom theme overrides: slot name -> "#AARRGGBB". Missing or
+        // invalid entries fall back to Frost. Edited in Settings.
+        public Dictionary<string, string> CustomThemeColors { get; set; } =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // Whether the custom theme counts as dark (dark dialogs and
+        // native controls).
+        public bool CustomThemeIsDark { get; set; } = false;
 
         // When true, youtube-related CDN/media domains are NOT blocked
         // via hosts so embedded players keep working while
@@ -101,7 +111,15 @@ namespace LochlanProductivity.Services
                                 UseStickyNoteMode,
 
                             ThemeName =
-                                ThemeName
+                                ThemeName,
+
+                            CustomThemeColors =
+                                new Dictionary<string, string>(
+                                    CustomThemeColors,
+                                    StringComparer.OrdinalIgnoreCase),
+
+                            CustomThemeIsDark =
+                                CustomThemeIsDark
                         },
                         new JsonSerializerOptions
                         {
@@ -172,6 +190,17 @@ namespace LochlanProductivity.Services
                     ThemeName = loaded.ThemeName!;
                 }
 
+                if (loaded.CustomThemeColors != null)
+                {
+                    CustomThemeColors =
+                        new Dictionary<string, string>(
+                            loaded.CustomThemeColors,
+                            StringComparer.OrdinalIgnoreCase);
+                }
+
+                CustomThemeIsDark =
+                    loaded.CustomThemeIsDark;
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -215,6 +244,10 @@ namespace LochlanProductivity.Services
             public bool UseStickyNoteMode { get; set; } = false;
 
             public string? ThemeName { get; set; }
+
+            public Dictionary<string, string>? CustomThemeColors { get; set; }
+
+            public bool CustomThemeIsDark { get; set; }
         }
     }
 }

@@ -515,8 +515,7 @@ namespace LochlanProductivity
             LoadLongTermNote();
 
             // Load the theme before first paint of the lists.
-            currentTheme =
-                AppThemePalette.FromName(appSettings.ThemeName);
+            currentTheme = ResolveTheme();
 
             ApplyTheme();
 
@@ -2904,6 +2903,16 @@ namespace LochlanProductivity
         // ============================================================
 
         private AppThemePalette currentTheme = AppThemePalette.Frost;
+
+        private AppThemePalette ResolveTheme() =>
+            string.Equals(
+                appSettings.ThemeName,
+                "Custom",
+                StringComparison.OrdinalIgnoreCase)
+                ? AppThemePalette.Customized(
+                    appSettings.CustomThemeColors,
+                    appSettings.CustomThemeIsDark)
+                : AppThemePalette.FromName(appSettings.ThemeName);
 
         private static Microsoft.UI.Xaml.Media.SolidColorBrush TB(
             Windows.UI.Color color) =>
@@ -8026,6 +8035,10 @@ namespace LochlanProductivity
 
         private async System.Threading.Tasks.Task OpenSettingsDialogAsync()
         {
+            // Pre-declared so nested-button handlers (custom theme
+            // editor) can close this dialog before opening theirs.
+            ContentDialog? settingsDialog = null;
+
             StackPanel content =
                 new StackPanel
                 {
@@ -8281,6 +8294,18 @@ namespace LochlanProductivity
                     Spacing = 4
                 };
 
+            void ApplyPickedTheme(string name)
+            {
+                appSettings.ThemeName = name;
+                appSettings.Save();
+
+                currentTheme = ResolveTheme();
+
+                ApplyTheme();
+                RefreshTaskList();
+                UpdateBlockingStatus();
+            }
+
             foreach (AppThemePalette palette in AppThemePalette.All)
             {
                 RadioButton themeRadio =
@@ -8298,26 +8323,57 @@ namespace LochlanProductivity
                     };
 
                 themeRadio.Checked += (s, e) =>
-                {
-                    appSettings.ThemeName = palette.Name;
-                    appSettings.Save();
-
-                    currentTheme = palette;
-
-                    ApplyTheme();
-                    RefreshTaskList();
-                    UpdateBlockingStatus();
-                };
+                    ApplyPickedTheme(palette.Name);
 
                 themeOptions.Children.Add(themeRadio);
             }
+
+            RadioButton customRadio =
+                new RadioButton
+                {
+                    Content = "Custom — Your own colors.",
+                    IsChecked =
+                        string.Equals(
+                            currentTheme.Name,
+                            "Custom",
+                            StringComparison.OrdinalIgnoreCase),
+                    GroupName = "AppThemeChoice"
+                };
+
+            customRadio.Checked += (s, e) =>
+                ApplyPickedTheme("Custom");
+
+            themeOptions.Children.Add(customRadio);
+
+            Button editColorsButton =
+                new Button
+                {
+                    Content = "Edit custom colors…",
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(0, 4, 0, 0),
+                    Padding = new Thickness(12, 4, 12, 4),
+                    CornerRadius = new CornerRadius(8)
+                };
+
+            editColorsButton.Click += async (s, e) =>
+            {
+                if (settingsDialog != null)
+                {
+                    await HideDialogAndWaitClosedAsync(settingsDialog);
+                }
+
+                await OpenCustomThemeDialogAsync();
+                await OpenSettingsDialogAsync();
+            };
+
+            themeOptions.Children.Add(editColorsButton);
 
             content.Children.Add(themeOptions);
 
             content.Children.Add(
                 new TextBlock
                 {
-                    Text = "More themes and custom colors later.",
+                    Text = "Custom starts from Frost; edit any slot.",
                     FontSize = 11,
                     Opacity = 0.7,
                     TextWrapping = TextWrapping.Wrap,
@@ -8328,7 +8384,7 @@ namespace LochlanProductivity
             // FUTURE SETTINGS GO HERE (new sections above this line)
             // ----------------------------------------------------
 
-            ContentDialog dialog =
+            settingsDialog =
                 new ContentDialog
                 {
                     Title = "Settings",
@@ -8344,7 +8400,7 @@ namespace LochlanProductivity
                     RequestedTheme = CurrentDialogTheme
                 };
 
-            await dialog.ShowAsync();
+            await settingsDialog.ShowAsync();
 
             // Persist the daily message on close (empty = default).
             string newMessage = dailyMessageBox.Text.Trim();
@@ -8361,6 +8417,239 @@ namespace LochlanProductivity
             {
                 appSettings.DailyPromptMessage = newMessage;
                 appSettings.Save();
+            }
+        }
+
+        // ============================================================
+        // CUSTOM THEME EDITOR
+        //
+        // One dialog: slot list on the left, ColorPicker on the
+        // right. Tapping a slot loads it into the picker; moving the
+        // picker writes straight into the draft. Saved + applied live
+        // on close. Slots missing from the draft fall back to Frost.
+        // ============================================================
+
+        private async System.Threading.Tasks.Task OpenCustomThemeDialogAsync()
+        {
+            Dictionary<string, string> draft =
+                new Dictionary<string, string>(
+                    appSettings.CustomThemeColors,
+                    StringComparer.OrdinalIgnoreCase);
+
+            bool draftIsDark = appSettings.CustomThemeIsDark;
+
+            string editingSlot = "WindowBackground";
+
+            Windows.UI.Color SlotColor(string key)
+            {
+                if (draft.TryGetValue(key, out string? hex) &&
+                    AppThemePalette.TryParseHex(hex, out var parsed))
+                {
+                    return parsed;
+                }
+
+                System.Reflection.PropertyInfo? prop =
+                    typeof(AppThemePalette).GetProperty(key);
+
+                if (prop != null)
+                {
+                    return (Windows.UI.Color)
+                        prop.GetValue(AppThemePalette.Frost)!;
+                }
+
+                return Microsoft.UI.Colors.Gray;
+            }
+
+            ColorPicker picker =
+                new ColorPicker
+                {
+                    IsAlphaEnabled = true,
+                    IsHexInputVisible = true,
+                    IsColorSpectrumVisible = true,
+                    IsColorPreviewVisible = true,
+                    MinWidth = 250
+                };
+
+            picker.Color = SlotColor(editingSlot);
+
+            Dictionary<string, Border> swatches =
+                new(StringComparer.OrdinalIgnoreCase);
+
+            StackPanel slotList =
+                new StackPanel
+                {
+                    Spacing = 2
+                };
+
+            void RefreshSwatches()
+            {
+                foreach (var entry in swatches)
+                {
+                    entry.Value.Background = TB(SlotColor(entry.Key));
+                }
+            }
+
+            foreach ((string key, string label) in AppThemePalette.ColorSlots)
+            {
+                string slotKey = key;
+
+                Border swatch =
+                    new Border
+                    {
+                        Width = 22,
+                        Height = 22,
+                        CornerRadius = new CornerRadius(6),
+                        Background = TB(SlotColor(slotKey)),
+                        BorderBrush = TB(currentTheme.MutedText),
+                        BorderThickness = new Thickness(1),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                swatches[slotKey] = swatch;
+
+                TextBlock name =
+                    new TextBlock
+                    {
+                        Text = label,
+                        FontSize = 12,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                StackPanel rowContent =
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 10
+                    };
+
+                rowContent.Children.Add(swatch);
+                rowContent.Children.Add(name);
+
+                Button row =
+                    new Button
+                    {
+                        Content = rowContent,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        HorizontalContentAlignment =
+                            HorizontalAlignment.Left,
+                        Background = TB(
+                            Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0)),
+                        BorderThickness = new Thickness(0),
+                        Padding = new Thickness(6, 3, 6, 3),
+                        CornerRadius = new CornerRadius(6)
+                    };
+
+                row.Click += (s, e) =>
+                {
+                    editingSlot = slotKey;
+                    picker.Color = SlotColor(slotKey);
+                };
+
+                slotList.Children.Add(row);
+            }
+
+            picker.ColorChanged += (s, e) =>
+            {
+                draft[editingSlot] =
+                    AppThemePalette.ToHex(picker.Color);
+
+                if (swatches.TryGetValue(editingSlot, out Border? sw))
+                {
+                    sw.Background = TB(picker.Color);
+                }
+            };
+
+            ToggleSwitch darkToggle =
+                new ToggleSwitch
+                {
+                    Header = "Dark theme",
+                    IsOn = draftIsDark
+                };
+
+            darkToggle.Toggled += (s, e) =>
+            {
+                draftIsDark = darkToggle.IsOn;
+            };
+
+            Button resetButton =
+                new Button
+                {
+                    Content = "Reset to Frost",
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+
+            resetButton.Click += (s, e) =>
+            {
+                draft.Clear();
+                picker.Color = SlotColor(editingSlot);
+                RefreshSwatches();
+            };
+
+            StackPanel right =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            right.Children.Add(picker);
+            right.Children.Add(darkToggle);
+            right.Children.Add(resetButton);
+
+            Grid grid = new Grid();
+
+            grid.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width = new GridLength(1, GridUnitType.Star)
+                });
+
+            grid.ColumnDefinitions.Add(
+                new ColumnDefinition
+                {
+                    Width = GridLength.Auto
+                });
+
+            ScrollViewer listScroll =
+                new ScrollViewer
+                {
+                    Content = slotList,
+                    MaxHeight = 420,
+                    VerticalScrollBarVisibility =
+                        ScrollBarVisibility.Auto,
+                    Margin = new Thickness(0, 0, 12, 0)
+                };
+
+            Grid.SetColumn(listScroll, 0);
+            Grid.SetColumn(right, 1);
+
+            grid.Children.Add(listScroll);
+            grid.Children.Add(right);
+
+            ContentDialog editor =
+                new ContentDialog
+                {
+                    Title = "Custom Theme",
+                    Content = grid,
+                    CloseButtonText = "Done",
+                    XamlRoot = this.Content.XamlRoot,
+                    RequestedTheme = CurrentDialogTheme
+                };
+
+            await editor.ShowAsync();
+
+            appSettings.CustomThemeColors = draft;
+            appSettings.CustomThemeIsDark = draftIsDark;
+            appSettings.Save();
+
+            if (string.Equals(
+                appSettings.ThemeName,
+                "Custom",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                currentTheme = ResolveTheme();
+                ApplyTheme();
+                RefreshTaskList();
+                UpdateBlockingStatus();
             }
         }
 

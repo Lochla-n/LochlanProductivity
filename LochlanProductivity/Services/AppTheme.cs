@@ -82,18 +82,124 @@ namespace LochlanProductivity.Services
         private static Windows.UI.Color C(byte a, byte r, byte g, byte b) =>
             Microsoft.UI.ColorHelper.FromArgb(a, r, g, b);
 
-        private static Windows.UI.Color C(string hex)
+        private static Windows.UI.Color C(string hex) =>
+            ParseHex(hex);
+
+        public static Windows.UI.Color ParseHex(string hex)
         {
-            string h = hex.Trim().TrimStart('#');
+            string h = (hex ?? "").Trim().TrimStart('#');
 
             if (h.Length == 6)
                 h = "FF" + h;
+
+            if (h.Length != 8)
+                h = "FF8A9A8B";
 
             return C(
                 Convert.ToByte(h.Substring(0, 2), 16),
                 Convert.ToByte(h.Substring(2, 2), 16),
                 Convert.ToByte(h.Substring(4, 2), 16),
                 Convert.ToByte(h.Substring(6, 2), 16));
+        }
+
+        public static bool TryParseHex(
+            string? hex,
+            out Windows.UI.Color color)
+        {
+            color = default;
+
+            if (string.IsNullOrWhiteSpace(hex))
+                return false;
+
+            string h = hex.Trim().TrimStart('#');
+
+            if (h.Length != 6 && h.Length != 8)
+                return false;
+
+            foreach (char c in h)
+            {
+                if (!Uri.IsHexDigit(c))
+                    return false;
+            }
+
+            color = ParseHex(h);
+
+            return true;
+        }
+
+        public static string ToHex(Windows.UI.Color color) =>
+            $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+        // Every settable color slot, in editor order.
+        public static IReadOnlyList<(string Key, string Label)> ColorSlots { get; } =
+            new (string Key, string Label)[]
+            {
+                ("WindowBackground", "Window background"),
+                ("CardBackground", "Cards"),
+                ("CardBorder", "Card borders"),
+                ("IncompleteCardBorder", "Incomplete card edge"),
+                ("NoteCardBackground", "Note cards"),
+                ("NoteCardBorder", "Note card borders"),
+                ("InkText", "Text"),
+                ("MutedText", "Muted text"),
+                ("PrimaryButton", "Main buttons"),
+                ("PrimaryButtonText", "Main button text"),
+                ("SecondaryButton", "Secondary buttons"),
+                ("SecondaryButtonText", "Secondary button text"),
+                ("GhostButton", "Quiet buttons"),
+                ("GhostButtonText", "Quiet button text"),
+                ("GhostButtonBorder", "Quiet button borders"),
+                ("DangerButton", "Remove buttons"),
+                ("DangerButtonText", "Remove button text"),
+                ("DangerButtonBorder", "Remove button borders"),
+                ("AccentBar", "Accent bar"),
+                ("OverdueText", "Overdue text"),
+                ("NotificationBackground", "Notifications"),
+                ("NotificationBorder", "Notification borders"),
+                ("InputBackground", "Text fields"),
+                ("InputBorder", "Text field borders"),
+                ("SyncDot", "Sync dot"),
+                ("SyncDotBusy", "Sync dot (busy)"),
+                ("DensityDot", "Calendar dots")
+            };
+
+        // User custom theme: every slot falls back to Frost unless
+        // overridden with a valid hex.
+        public static AppThemePalette Customized(
+            IDictionary<string, string> overrides,
+            bool isDark)
+        {
+            AppThemePalette result = new()
+            {
+                Name = "Custom",
+                DisplayName = "Custom",
+                Description = "Your own colors.",
+                IsDark = isDark
+            };
+
+            foreach (System.Reflection.PropertyInfo prop in
+                typeof(AppThemePalette).GetProperties())
+            {
+                if (prop.PropertyType != typeof(Windows.UI.Color) ||
+                    !prop.CanWrite)
+                {
+                    continue;
+                }
+
+                Windows.UI.Color value =
+                    (Windows.UI.Color)prop.GetValue(Frost)!;
+
+                if (overrides != null &&
+                    overrides.TryGetValue(prop.Name, out string? hex) &&
+                    TryParseHex(hex, out Windows.UI.Color parsed))
+                {
+                    value = parsed;
+                }
+
+                prop.SetValue(result, value);
+            }
+
+            return result;
         }
 
         public static AppThemePalette Frost { get; } = new()
