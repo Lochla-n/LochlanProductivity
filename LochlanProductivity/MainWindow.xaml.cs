@@ -72,26 +72,17 @@ namespace LochlanProductivity
             DateTime.MinValue;
 
         // ============================================================
-        // GOOGLE CALENDAR (hard block during busy events)
+        // EMERGENCY YOUTUBE BYPASS (15 minutes, for class tutorials)
         // ============================================================
 
-        private readonly GoogleCalendarService calendarService = new();
-
-        private DispatcherTimer? calendarPollTimer;
-
-        private DateTime? calendarEmergencyUntil;
-
-        private bool IsCalendarHardBlocked =>
-            calendarService.IsInBusyWindow &&
-            !(calendarEmergencyUntil.HasValue &&
-              calendarEmergencyUntil.Value > DateTime.Now);
+        private DateTime? youtubeEmergencyUntil;
 
         // When in emergency YouTube bypass, youtube domains are
-        // excluded from hosts blocking even while calendar block
-        // is otherwise active.
+        // excluded from hosts blocking while tasks are otherwise
+        // still enforcing.
         private bool IsYouTubeEmergencyActive =>
-            calendarEmergencyUntil.HasValue &&
-            calendarEmergencyUntil.Value > DateTime.Now;
+            youtubeEmergencyUntil.HasValue &&
+            youtubeEmergencyUntil.Value > DateTime.Now;
 
         // ============================================================
         // TASKS
@@ -235,7 +226,7 @@ namespace LochlanProductivity
 
             SetupAutoSync();
 
-            SetupCalendarSync();
+            SetupYouTubeEmergencyExpiry();
         }
 
         private async System.Threading.Tasks.Task
@@ -750,7 +741,7 @@ namespace LochlanProductivity
                     taskRecurrenceManager.IsDue(task));
 
         private bool IsFocusModeLocked =>
-            HasIncompleteTasks || IsCalendarHardBlocked;
+            HasIncompleteTasks;
 
         private void UpdateFocusModeLock()
         {
@@ -764,16 +755,7 @@ namespace LochlanProductivity
                 BlockingButton.Content =
                     "Focus Mode Locked";
 
-                if (IsCalendarHardBlocked)
-                {
-                    string when =
-                        calendarService.CurrentEvent != null
-                            ? $"Class: {calendarService.CurrentEvent.Summary} until {calendarService.CurrentEvent.End:t}"
-                            : "Class time — Focus locked";
-
-                    BlockingStatusText.Text = when;
-                }
-                else if (IsDailyPlanMissing)
+                if (IsDailyPlanMissing)
                 {
                     BlockingStatusText.Text =
                         "Add today's task to unlock Focus Mode.";
@@ -784,14 +766,8 @@ namespace LochlanProductivity
                         "Focus Mode is locked until all tasks are complete.";
                 }
 
-                UpdateCalendarEmergencyUI();
-
                 return;
             }
-
-            // Not locked: hide calendar/emergency UI.
-            CalendarStatusText.Visibility = Visibility.Collapsed;
-            EmergencyButton.Visibility = Visibility.Collapsed;
 
             BlockingButton.Content =
                 blockingService.IsMonitoring
@@ -802,95 +778,14 @@ namespace LochlanProductivity
                 blockingService.IsMonitoring
                     ? "Focus Mode is ON."
                     : "Focus Mode is OFF.";
-
-            UpdateCalendarStatusText();
         }
 
-        private void UpdateCalendarEmergencyUI()
+        private void SetupYouTubeEmergencyExpiry()
         {
             try
             {
-                // Emergency button now lives tucked in Blocked Websites
-                // settings (harder to reach) — keep the hidden compat
-                // button collapsed. Focus card only shows status text.
-                EmergencyButton.Visibility = Visibility.Collapsed;
-
-                if (IsYouTubeEmergencyActive)
-                {
-                    CalendarStatusText.Visibility = Visibility.Visible;
-                    CalendarStatusText.Text =
-                        $"⚡ YouTube allowed until {calendarEmergencyUntil: t} (emergency)";
-                }
-                else if (IsFocusModeLocked)
-                {
-                    CalendarStatusText.Visibility = Visibility.Visible;
-
-                    if (IsCalendarHardBlocked)
-                    {
-                        CalendarStatusText.Text =
-                            $"📅 {calendarService.CurrentEvent?.Summary ?? "Busy"} — YouTube blocked for class";
-                    }
-                    else
-                    {
-                        CalendarStatusText.Text =
-                            "YouTube blocked — emergency is in Blocked Websites → bottom";
-                    }
-                }
-                else
-                {
-                    CalendarStatusText.Visibility = Visibility.Collapsed;
-                }
-
-                UpdateCalendarStatusText();
-            }
-            catch
-            {
-            }
-        }
-
-        private void UpdateCalendarStatusText()
-        {
-            try
-            {
-                if (calendarService.IsConfigured &&
-                    !calendarService.IsConnected)
-                {
-                    CalendarStatusText.Visibility = Visibility.Visible;
-                    CalendarStatusText.Text =
-                        $"Calendar not connected — {calendarService.LastError}";
-                }
-                else if (!calendarService.IsConfigured &&
-                         !IsCalendarHardBlocked)
-                {
-                    // No credentials yet: keep hidden to avoid nag.
-                    if (CalendarStatusText.Text.Contains("Calendar"))
-                        CalendarStatusText.Visibility = Visibility.Collapsed;
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private void SetupCalendarSync()
-        {
-            try
-            {
-                calendarPollTimer = new DispatcherTimer
-                {
-                    Interval = TimeSpan.FromMinutes(2)
-                };
-
-                calendarPollTimer.Tick +=
-                    async (s, e) => await RefreshCalendarAsync();
-
-                // Fire and forget initial connect.
-                _ = RefreshCalendarAsync();
-
-                calendarPollTimer.Start();
-
-                // Also check every second if we're inside a busy window
-                // that just started/ended, to flip the hard lock promptly.
+                // Expire the emergency bypass automatically and
+                // re-engage YouTube blocking when the window ends.
                 DispatcherTimer edgeTimer = new DispatcherTimer
                 {
                     Interval = TimeSpan.FromSeconds(15)
@@ -900,23 +795,17 @@ namespace LochlanProductivity
                 {
                     try
                     {
-                        calendarService.UpdateCurrentWindow();
-
-                        bool wasBlocked = IsCalendarHardBlocked;
-
-                        // Expire emergency bypass automatically.
-                        if (calendarEmergencyUntil.HasValue &&
-                            calendarEmergencyUntil.Value <= DateTime.Now)
+                        if (youtubeEmergencyUntil.HasValue &&
+                            youtubeEmergencyUntil.Value <= DateTime.Now)
                         {
-                            calendarEmergencyUntil = null;
+                            youtubeEmergencyUntil = null;
                             websiteBlocksApplied = null;
-                        }
 
-                        // If calendar window changed, re-evaluate blocking.
-                        UpdateFocusModeLock();
-                        UpdateWebsiteBlockingState();
-                        UpdateBlockingStatus();
-                        EnforceBlocking();
+                            UpdateFocusModeLock();
+                            UpdateWebsiteBlockingState();
+                            UpdateBlockingStatus();
+                            EnforceBlocking();
+                        }
                     }
                     catch { }
                 };
@@ -925,128 +814,24 @@ namespace LochlanProductivity
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"calendar setup failed: {ex}");
-            }
-        }
-
-        private async System.Threading.Tasks.Task RefreshCalendarAsync()
-        {
-            try
-            {
-                await calendarService.RefreshAsync();
-
-                UpdateFocusModeLock();
-                UpdateWebsiteBlockingState();
-                UpdateBlockingStatus();
-                EnforceBlocking();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"calendar refresh failed: {ex}");
+                System.Diagnostics.Debug.WriteLine($"emergency expiry setup failed: {ex}");
             }
         }
 
         private void EmergencyButton_Click(object sender, RoutedEventArgs e)
         {
-            // Hard block is active for class — allow a short YouTube
-            // window for class material. Ends with the class or 15m.
+            // Hard block is active — allow a short YouTube window
+            // for class tutorial material. Fixed 15 minutes.
             DateTime until = DateTime.Now.AddMinutes(15);
 
-            if (calendarService.CurrentEvent != null)
-            {
-                // Clamp to event end so bypass doesn't outlive class.
-                if (calendarService.CurrentEvent.End > DateTime.Now &&
-                    calendarService.CurrentEvent.End < until)
-                {
-                    until = calendarService.CurrentEvent.End;
-                }
-            }
-
-            calendarEmergencyUntil = until;
+            youtubeEmergencyUntil = until;
 
             websiteBlocksApplied = null;
 
             UpdateFocusModeLock();
             UpdateWebsiteBlockingState();
 
-            HostsFileBlocker.Log($"calendar emergency YouTube bypass until {until:t}");
-        }
-
-        private async void CalendarButton_Click(object sender, RoutedEventArgs e)
-        {
-            string credPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "LochlanProductivity",
-                "google-credentials.json");
-
-            string msg =
-                calendarService.IsConfigured
-                    ? $"Configured: {credPath}\n\nConnected: {calendarService.IsConnected}\n" +
-                      $"Last error: {calendarService.LastError}\n\n" +
-                      $"Cached events: {calendarService.CachedEvents.Count}\n" +
-                      (calendarService.CurrentEvent != null
-                          ? $"Current: {calendarService.CurrentEvent.Summary} {calendarService.CurrentEvent.Start:t}-{calendarService.CurrentEvent.End:t}\n"
-                          : "No current class.\n") +
-                      (calendarService.IsInBusyWindow ? "→ Hard block ACTIVE\n" : "") +
-                      (IsYouTubeEmergencyActive ? $"→ YouTube emergency until {calendarEmergencyUntil:t}\n" : "") +
-                      "\nTo change account, replace google-credentials.json and click Reconnect."
-                    : $"Not configured.\n\n1) Go to https://console.cloud.google.com → Create Project → Enable Google Calendar API\n" +
-                      "2) Credentials → Create OAuth Client ID (Desktop App) → Download JSON\n" +
-                      $"3) Save it as:\n{credPath}\n\n" +
-                      "4) Then click Reconnect.";
-
-            StackPanel panel = new StackPanel { Spacing = 12 };
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = msg,
-                TextWrapping = TextWrapping.Wrap,
-                Opacity = 0.85
-            });
-
-            Button reconnectBtn = new Button
-            {
-                Content = calendarService.IsConnected ? "Refresh now" : "Reconnect",
-                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left
-            };
-
-            Button disconnectBtn = new Button
-            {
-                Content = "Disconnect",
-                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left
-            };
-
-            panel.Children.Add(reconnectBtn);
-            panel.Children.Add(disconnectBtn);
-
-            ContentDialog dlg = new ContentDialog
-            {
-                Title = "Google Calendar — Class Blocking",
-                Content = new ScrollViewer { Content = panel, MaxHeight = 420 },
-                CloseButtonText = "Close",
-                XamlRoot = this.Content.XamlRoot
-            };
-
-            reconnectBtn.Click += async (s, a) =>
-            {
-                dlg.Hide();
-                await RefreshCalendarAsync();
-                await ShowSimpleMessageAsync(
-                    calendarService.IsConnected
-                        ? $"Connected. Found {calendarService.CachedEvents.Count} busy events."
-                        : $"Not connected: {calendarService.LastError}");
-            };
-
-            disconnectBtn.Click += (s, a) =>
-            {
-                calendarService.Disconnect();
-                calendarEmergencyUntil = null;
-                dlg.Hide();
-                UpdateFocusModeLock();
-                UpdateWebsiteBlockingState();
-            };
-
-            await dlg.ShowAsync();
+            HostsFileBlocker.Log($"emergency YouTube bypass until {until:t}");
         }
 
         // ============================================================
@@ -1934,28 +1719,6 @@ namespace LochlanProductivity
 
                 map[task] =
                     policyManager.GetEffectiveBlockedApps(task);
-            }
-
-            // Calendar hard block: even with no incomplete tasks,
-            // block the same apps as Focus would (all app groups).
-            if (IsCalendarHardBlocked)
-            {
-                var allApps = groupManager.Groups
-                    .SelectMany(g => g.Apps ?? new List<BlockedApp>())
-                    .GroupBy(a => a.ExecutablePath, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First())
-                    .ToList();
-
-                if (allApps.Count > 0)
-                {
-                    TodoTask calTask = new TodoTask
-                    {
-                        Title = calendarService.CurrentEvent?.Summary ?? "Class",
-                        IsCompleted = false
-                    };
-
-                    map[calTask] = allApps;
-                }
             }
 
             return map;
@@ -3079,7 +2842,7 @@ namespace LochlanProductivity
             HostsFileBlocker.Log(
                 $"state -> {(desired ? "BLOCKING" : "unblocked")} " +
                 $"(enforcing={blockingService.IsBlockingActive}, " +
-                $"locked={IsFocusModeLocked} (tasks={HasIncompleteTasks}, calendar={IsCalendarHardBlocked}), " +
+                $"locked={IsFocusModeLocked} (tasks={HasIncompleteTasks}), " +
                 $"domains={blockedSiteStore.Domains.Count})");
 
             // When embed-allow is on, keep the main youtube.com
@@ -3658,7 +3421,7 @@ namespace LochlanProductivity
             {
                 // Reuse the same 15m emergency logic.
                 EmergencyButton_Click(s, e);
-                emergencyBtn.Content = "Allowed until " + (calendarEmergencyUntil?.ToString("t") ?? "15m") + " — close this dialog";
+                emergencyBtn.Content = "Allowed until " + (youtubeEmergencyUntil?.ToString("t") ?? "15m") + " — close this dialog";
                 emergencyBtn.IsEnabled = false;
                 emergencyBtn.Opacity = 0.45;
             };
