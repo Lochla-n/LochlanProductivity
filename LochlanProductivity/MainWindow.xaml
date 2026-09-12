@@ -90,9 +90,12 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBox x:Name="TaskInput" Grid.Column="0" PlaceholderText="What do you need to do?" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="TaskInput_KeyDown"/>
-                <Button Grid.Column="1" Content="Add" Margin="10,0,0,0" Click="AddTask_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="16,6"/>
+                <!-- Sticky group check-off: one color dot per app group, left of Add -->
+                <StackPanel x:Name="TaskGroupStrip" Grid.Column="1" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <Button Grid.Column="2" Content="Add" Margin="10,0,0,0" Click="AddTask_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="16,6"/>
             </Grid>
         </Border>
 

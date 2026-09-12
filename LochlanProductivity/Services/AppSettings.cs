@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace LochlanProductivity.Services
@@ -22,6 +24,10 @@ namespace LochlanProductivity.Services
                 "settings.json");
 
         public bool KillBrowsersOnEngage { get; set; } = false;
+
+        // Sticky quick-add group selection (task input color dots).
+        // Persists so the check-off is not redone between tasks.
+        public List<string> StickyBlockedGroupIds { get; set; } = new();
 
         // When true, youtube-related CDN/media domains are NOT blocked
         // via hosts so embedded players keep working while
@@ -56,7 +62,10 @@ namespace LochlanProductivity.Services
                                 KillBrowsersOnEngage,
 
                             AllowYouTubeEmbeds =
-                                AllowYouTubeEmbeds
+                                AllowYouTubeEmbeds,
+
+                            StickyBlockedGroupIds =
+                                StickyBlockedGroupIds.ToList()
                         },
                         new JsonSerializerOptions
                         {
@@ -100,6 +109,16 @@ namespace LochlanProductivity.Services
                 KillBrowsersOnEngage =
                     loaded.KillBrowsersOnEngage;
 
+                if (loaded.StickyBlockedGroupIds != null)
+                {
+                    StickyBlockedGroupIds =
+                        loaded.StickyBlockedGroupIds
+                            .Where(id => !string.IsNullOrWhiteSpace(id))
+                            .Select(id => id.Trim())
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                }
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -133,6 +152,8 @@ namespace LochlanProductivity.Services
             public bool KillBrowsersOnEngage { get; set; }
 
             public bool AllowYouTubeEmbeds { get; set; } = true;
+
+            public List<string>? StickyBlockedGroupIds { get; set; }
         }
     }
 }

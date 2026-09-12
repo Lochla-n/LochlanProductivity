@@ -109,6 +109,163 @@ namespace LochlanProductivity
         private readonly List<BlockedApp> availableApps = new();
 
         // ============================================================
+        // STICKY QUICK-ADD GROUPS (task input color dots)
+        // ============================================================
+
+        // Group IDs checked in the input strip. Survives between task
+        // adds (and restarts, via AppSettings) so the check-off is not
+        // redone every time.
+        private readonly HashSet<string> stickyBlockedGroupIds =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // Muted frost-friendly palette. Group color is a stable hash
+        // of the group Id, so it never changes and matches on both
+        // synced computers.
+        private static readonly string[] GroupColorPalette =
+        {
+            "#7A9B7E", "#A67C52", "#6E8FA8", "#9B7EA6",
+            "#C2A24B", "#5F8F8B", "#B06A4F", "#8A8F5C",
+            "#A87E8F", "#5B7A99", "#94865C", "#7E6B9B"
+        };
+
+        private static Windows.UI.Color GetGroupColor(AppGroup group)
+        {
+            unchecked
+            {
+                uint hash = 2166136261;
+
+                string id =
+                    (group?.Id ?? "group").ToLowerInvariant();
+
+                foreach (char c in id)
+                {
+                    hash ^= c;
+                    hash *= 16777619;
+                }
+
+                return Microsoft.UI.ColorHelper.FromArgb(
+                    255,
+                    Convert.ToByte(
+                        GroupColorPalette[hash % GroupColorPalette.Length]
+                            .Substring(1, 2), 16),
+                    Convert.ToByte(
+                        GroupColorPalette[hash % GroupColorPalette.Length]
+                            .Substring(3, 2), 16),
+                    Convert.ToByte(
+                        GroupColorPalette[hash % GroupColorPalette.Length]
+                            .Substring(5, 2), 16));
+            }
+        }
+
+        private void EnsureStickyDefaults()
+        {
+            stickyBlockedGroupIds.RemoveWhere(
+                id => groupManager.GetGroup(id) == null);
+
+            if (stickyBlockedGroupIds.Count == 0 &&
+                groupManager.GetGroup("games") != null)
+            {
+                stickyBlockedGroupIds.Add("games");
+            }
+        }
+
+        private void ApplyStickyBlockingPolicy(TodoTask task)
+        {
+            if (task == null)
+                return;
+
+            foreach (string groupId in stickyBlockedGroupIds)
+            {
+                if (groupManager.GetGroup(groupId) == null)
+                    continue;
+
+                if (!task.BlockedGroups.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                {
+                    task.BlockedGroups.Add(groupId);
+                }
+            }
+
+            policyManager.ExpandTaskGroups(task);
+        }
+
+        private void RefreshTaskGroupStrip()
+        {
+            try
+            {
+                if (TaskGroupStrip == null)
+                    return;
+
+                EnsureStickyDefaults();
+
+                TaskGroupStrip.Children.Clear();
+
+                foreach (AppGroup group in groupManager.Groups)
+                {
+                    string groupId = group.Id;
+
+                    bool isChecked =
+                        stickyBlockedGroupIds.Contains(groupId);
+
+                    Border dot =
+                        new Border
+                        {
+                            Width = 13,
+                            Height = 13,
+                            CornerRadius = new CornerRadius(3),
+                            Background =
+                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                    GetGroupColor(group)),
+                            BorderBrush =
+                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                    Microsoft.UI.ColorHelper.FromArgb(
+                                        255, 150, 160, 155)),
+                            BorderThickness = new Thickness(1)
+                        };
+
+                    CheckBox box =
+                        new CheckBox
+                        {
+                            Content = dot,
+                            IsChecked = isChecked,
+                            MinWidth = 0,
+                            Padding = new Thickness(2, 0, 2, 0),
+                            Margin = new Thickness(1, 0, 1, 0),
+                            VerticalAlignment = VerticalAlignment.Center
+                        };
+
+                    ToolTipService.SetToolTip(
+                        box,
+                        $"{group.Name} " +
+                        $"({group.Apps.Count} app" +
+                        $"{(group.Apps.Count == 1 ? "" : "s")})");
+
+                    box.Checked += (s, e) =>
+                    {
+                        stickyBlockedGroupIds.Add(groupId);
+                        appSettings.StickyBlockedGroupIds =
+                            stickyBlockedGroupIds.ToList();
+                        appSettings.Save();
+                    };
+
+                    box.Unchecked += (s, e) =>
+                    {
+                        stickyBlockedGroupIds.Remove(groupId);
+                        appSettings.StickyBlockedGroupIds =
+                            stickyBlockedGroupIds.ToList();
+                        appSettings.Save();
+                    };
+
+                    TaskGroupStrip.Children.Add(box);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        // ============================================================
         // SAVE FILES
         // ============================================================
 
@@ -175,6 +332,14 @@ namespace LochlanProductivity
 
             // Load groups first because tasks can reference groups.
             await LoadAppGroupsAsync();
+
+            // Restore the sticky quick-add selection (or default to
+            // Games, preserving the old new-task behavior).
+            foreach (string id in appSettings.StickyBlockedGroupIds)
+            {
+                if (groupManager.GetGroup(id) != null)
+                    stickyBlockedGroupIds.Add(id);
+            }
 
             // Load saved tasks.
             await LoadTasksAsync();
@@ -966,7 +1131,7 @@ namespace LochlanProductivity
                     IsCompleted = false
                 };
 
-            policyManager.ApplyDefaultPolicy(task);
+            ApplyStickyBlockingPolicy(task);
 
             tasks.Add(task);
 
@@ -1854,16 +2019,7 @@ namespace LochlanProductivity
                         new List<string>()
                 };
 
-            if (groupManager.Groups.Any(
-                group =>
-                    group.Id.Equals(
-                        "games",
-                        StringComparison.OrdinalIgnoreCase)))
-            {
-                task.BlockedGroups.Add("games");
-            }
-
-            policyManager.ApplyDefaultPolicy(task);
+            ApplyStickyBlockingPolicy(task);
 
             tasks.Add(task);
 
@@ -2479,6 +2635,10 @@ namespace LochlanProductivity
                     TextWrapping = TextWrapping.Wrap
                 });
             }
+
+            // Keep the quick-add strip in sync (new/deleted groups).
+            // Checked state comes from the sticky set, so it survives.
+            RefreshTaskGroupStrip();
         }
 
         private string GetBlockedAppsButtonText(
