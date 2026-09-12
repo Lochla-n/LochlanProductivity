@@ -29,6 +29,27 @@ namespace LochlanProductivity.Services
         // Persists so the check-off is not redone between tasks.
         public List<string> StickyBlockedGroupIds { get; set; } = new();
 
+        // PERSONAL vs PUBLIC: set false on your own strict build to
+        // make the daily plan un-disableable. Public GitHub builds
+        // keep true so others can turn the prompt off in Settings.
+        public const bool AllowDisablingDailyPrompt = true;
+
+        // Daily plan prompt switch (public builds). False = no prompt
+        // and no missing-plan lock. Ignored when the lockdown above
+        // is false.
+        public bool DailyPromptEnabled { get; set; } = true;
+
+        public const string DefaultDailyPromptMessage =
+            "Focus is locked until you add at least one task for today.";
+
+        // Custom text shown in the daily plan dialog.
+        public string DailyPromptMessage { get; set; } =
+            DefaultDailyPromptMessage;
+
+        // When true, the Long-term list is replaced by a free-writing
+        // sticky-note area.
+        public bool UseStickyNoteMode { get; set; } = false;
+
         // When true, youtube-related CDN/media domains are NOT blocked
         // via hosts so embedded players keep working while
         // youtube.com itself remains blocked for direct navigation.
@@ -65,7 +86,16 @@ namespace LochlanProductivity.Services
                                 AllowYouTubeEmbeds,
 
                             StickyBlockedGroupIds =
-                                StickyBlockedGroupIds.ToList()
+                                StickyBlockedGroupIds.ToList(),
+
+                            DailyPromptEnabled =
+                                DailyPromptEnabled,
+
+                            DailyPromptMessage =
+                                DailyPromptMessage,
+
+                            UseStickyNoteMode =
+                                UseStickyNoteMode
                         },
                         new JsonSerializerOptions
                         {
@@ -119,6 +149,18 @@ namespace LochlanProductivity.Services
                             .ToList();
                 }
 
+                DailyPromptEnabled =
+                    loaded.DailyPromptEnabled;
+
+                if (!string.IsNullOrWhiteSpace(loaded.DailyPromptMessage))
+                {
+                    DailyPromptMessage =
+                        loaded.DailyPromptMessage!;
+                }
+
+                UseStickyNoteMode =
+                    loaded.UseStickyNoteMode;
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -154,6 +196,12 @@ namespace LochlanProductivity.Services
             public bool AllowYouTubeEmbeds { get; set; } = true;
 
             public List<string>? StickyBlockedGroupIds { get; set; }
+
+            public bool DailyPromptEnabled { get; set; } = true;
+
+            public string? DailyPromptMessage { get; set; }
+
+            public bool UseStickyNoteMode { get; set; } = false;
         }
     }
 }

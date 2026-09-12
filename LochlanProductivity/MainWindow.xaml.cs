@@ -510,6 +510,10 @@ namespace LochlanProductivity
             // Load saved tasks.
             await LoadTasksAsync();
 
+            // Load the sticky-note text (used when Long-term list is
+            // swapped for the writing area in Settings).
+            LoadLongTermNote();
+
             // Activate recurring tasks that have become due.
             taskRecurrenceManager.UpdateRecurringTasks(
                 ActiveTasks.ToList());
@@ -709,6 +713,44 @@ namespace LochlanProductivity
             }
         }
 
+        private void ApplySyncResultSideData(SyncResult result)
+        {
+            if (result.DailyPromptChanged)
+            {
+                dailyPromptManager.ApplySyncedDate(
+                    result.MergedDailyPromptDate);
+            }
+
+            if (result.NoteChanged)
+            {
+                // Never clobber text being typed right now; the
+                // debounced local save will push the user's version.
+                bool userTyping =
+                    LongTermNoteBox != null &&
+                    LongTermNoteBox.FocusState != FocusState.Unfocused;
+
+                if (!userTyping)
+                {
+                    longTermNoteText = result.MergedNoteText ?? "";
+                    longTermNoteModified = result.MergedNoteModified;
+
+                    applyingRemoteNote = true;
+
+                    try
+                    {
+                        if (LongTermNoteBox != null)
+                            LongTermNoteBox.Text = longTermNoteText;
+                    }
+                    finally
+                    {
+                        applyingRemoteNote = false;
+                    }
+
+                    _ = SaveLongTermNoteAsync();
+                }
+            }
+        }
+
         private async System.Threading.Tasks.Task DoAutoSyncAsync()
         {
             if (isAutoSyncInProgress)
@@ -729,20 +771,19 @@ namespace LochlanProductivity
                         groupManager,
                         scheduleManager,
                         blockedSiteStore,
-                        dailyPromptManager.LastPromptDate);
+                        dailyPromptManager.LastPromptDate,
+                        longTermNoteText,
+                        longTermNoteModified);
 
-                if (result.DailyPromptChanged)
-                {
-                    dailyPromptManager.ApplySyncedDate(
-                        result.MergedDailyPromptDate);
-                }
+                ApplySyncResultSideData(result);
 
                 bool hadChanges =
                     result.TaskChanges > 0 ||
                     result.GroupChanges > 0 ||
                     result.ScheduleChanges > 0 ||
                     result.SiteChanges > 0 ||
-                    result.DailyPromptChanged;
+                    result.DailyPromptChanged ||
+                    result.NoteChanged;
 
                 if (result.Success && hadChanges)
                 {
@@ -811,20 +852,19 @@ namespace LochlanProductivity
                         groupManager,
                         scheduleManager,
                         blockedSiteStore,
-                        dailyPromptManager.LastPromptDate);
+                        dailyPromptManager.LastPromptDate,
+                        longTermNoteText,
+                        longTermNoteModified);
 
-                if (result.DailyPromptChanged)
-                {
-                    dailyPromptManager.ApplySyncedDate(
-                        result.MergedDailyPromptDate);
-                }
+                ApplySyncResultSideData(result);
 
                 bool hadChanges =
                     result.TaskChanges > 0 ||
                     result.GroupChanges > 0 ||
                     result.ScheduleChanges > 0 ||
                     result.SiteChanges > 0 ||
-                    result.DailyPromptChanged;
+                    result.DailyPromptChanged ||
+                    result.NoteChanged;
 
                 if (result.Success && hadChanges)
                 {
@@ -989,20 +1029,19 @@ namespace LochlanProductivity
                         groupManager,
                         scheduleManager,
                         blockedSiteStore,
-                        dailyPromptManager.LastPromptDate);
+                        dailyPromptManager.LastPromptDate,
+                        longTermNoteText,
+                        longTermNoteModified);
 
-                if (result.DailyPromptChanged)
-                {
-                    dailyPromptManager.ApplySyncedDate(
-                        result.MergedDailyPromptDate);
-                }
+                ApplySyncResultSideData(result);
 
                 if (result.Success &&
                     (result.TaskChanges > 0 ||
                       result.GroupChanges > 0 ||
                       result.ScheduleChanges > 0 ||
                       result.SiteChanges > 0 ||
-                      result.DailyPromptChanged))
+                      result.DailyPromptChanged ||
+                      result.NoteChanged))
                 {
                     RefreshTaskList();
 
@@ -1040,7 +1079,14 @@ namespace LochlanProductivity
         // Daily plan is required once per calendar day. Until the
         // user adds today's task, focus stays locked even if there
         // are no incomplete tasks (prevents bypass by skipping).
+        // Public builds can switch the prompt off in Settings; the
+        // personal strict build forces it on via the lockdown const.
+        private bool IsDailyPromptEnabled =>
+            !AppSettingsManager.AllowDisablingDailyPrompt ||
+            appSettings.DailyPromptEnabled;
+
         private bool IsDailyPlanMissing =>
+            IsDailyPromptEnabled &&
             dailyPromptManager.ShouldShowPrompt();
 
         private bool HasIncompleteTasks =>
@@ -1154,7 +1200,9 @@ namespace LochlanProductivity
             // of leftover incomplete tasks. Until the user adds
             // today's task, IsDailyPlanMissing keeps focus locked
             // and SyncNow still works but blocking cannot be bypassed.
-            if (!dailyPromptManager.ShouldShowPrompt())
+            // Skipped entirely when the prompt is switched off.
+            if (!IsDailyPromptEnabled ||
+                !dailyPromptManager.ShouldShowPrompt())
             {
                 return;
             }
@@ -1180,7 +1228,8 @@ namespace LochlanProductivity
 
         private async System.Threading.Tasks.Task CheckDailyPromptCoreAsync()
         {
-            if (!dailyPromptManager.ShouldShowPrompt())
+            if (!IsDailyPromptEnabled ||
+                !dailyPromptManager.ShouldShowPrompt())
             {
                 return;
             }
@@ -1212,12 +1261,16 @@ namespace LochlanProductivity
                         Spacing = 10
                     };
 
+                string promptMessage =
+                    string.IsNullOrWhiteSpace(
+                        appSettings.DailyPromptMessage)
+                        ? AppSettingsManager.DefaultDailyPromptMessage
+                        : appSettings.DailyPromptMessage.Trim();
+
                 dialogContent.Children.Add(
                     new TextBlock
                     {
-                        Text =
-                            "Focus is locked until you add at least " +
-                            "one task for today.",
+                        Text = promptMessage,
 
                         TextWrapping =
                             TextWrapping.Wrap,
@@ -2213,6 +2266,158 @@ namespace LochlanProductivity
             await SaveTasksAsync();
             LongTermInput.Text = "";
             RefreshTaskList();
+        }
+
+        // ============================================================
+        // STICKY-NOTE WRITING AREA (Long-term alternative)
+        // ============================================================
+
+        private string longTermNoteText = "";
+
+        private DateTime? longTermNoteModified;
+
+        private DispatcherTimer? longTermNoteSaveTimer;
+
+        private bool applyingRemoteNote;
+
+        private string LongTermNoteFilePath =>
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData),
+                "LochlanProductivity",
+                "longterm-note.json");
+
+        private void LoadLongTermNote()
+        {
+            try
+            {
+                if (!File.Exists(LongTermNoteFilePath))
+                    return;
+
+                LongTermNoteData? loaded =
+                    JsonSerializer.Deserialize<LongTermNoteData>(
+                        File.ReadAllText(LongTermNoteFilePath),
+                        new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+                if (loaded == null)
+                    return;
+
+                longTermNoteText = loaded.Text ?? "";
+                longTermNoteModified = loaded.LastModified;
+            }
+            catch
+            {
+            }
+        }
+
+        private async System.Threading.Tasks.Task SaveLongTermNoteAsync()
+        {
+            try
+            {
+                string? directory =
+                    Path.GetDirectoryName(LongTermNoteFilePath);
+
+                if (directory != null)
+                    Directory.CreateDirectory(directory);
+
+                string json =
+                    JsonSerializer.Serialize(
+                        new LongTermNoteData
+                        {
+                            Text = longTermNoteText,
+                            LastModified =
+                                longTermNoteModified ?? DateTime.UtcNow
+                        },
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = true
+                        });
+
+                string tempFile = LongTermNoteFilePath + ".tmp";
+
+                await File.WriteAllTextAsync(tempFile, json);
+
+                File.Move(tempFile, LongTermNoteFilePath, true);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to save long-term note: {ex}");
+            }
+        }
+
+        private void LongTermNoteBox_TextChanged(
+            object sender,
+            TextChangedEventArgs e)
+        {
+            if (applyingRemoteNote)
+                return;
+
+            longTermNoteText = LongTermNoteBox.Text ?? "";
+            longTermNoteModified = DateTime.UtcNow;
+
+            try
+            {
+                if (longTermNoteSaveTimer == null)
+                {
+                    longTermNoteSaveTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromSeconds(1.2)
+                    };
+
+                    longTermNoteSaveTimer.Tick +=
+                        async (s, args) =>
+                        {
+                            longTermNoteSaveTimer!.Stop();
+                            await SaveLongTermNoteAsync();
+                            QueueAutoSync();
+                        };
+                }
+
+                longTermNoteSaveTimer.Stop();
+                longTermNoteSaveTimer.Start();
+            }
+            catch
+            {
+            }
+        }
+
+        private void ApplyLongTermMode()
+        {
+            try
+            {
+                bool noteMode = appSettings.UseStickyNoteMode;
+
+                LongTermInputRow.Visibility =
+                    noteMode ? Visibility.Collapsed : Visibility.Visible;
+
+                LongTermListScroll.Visibility =
+                    noteMode ? Visibility.Collapsed : Visibility.Visible;
+
+                LongTermNoteBox.Visibility =
+                    noteMode ? Visibility.Visible : Visibility.Collapsed;
+
+                if (noteMode &&
+                    LongTermNoteBox.Text != (longTermNoteText ?? ""))
+                {
+                    applyingRemoteNote = true;
+
+                    try
+                    {
+                        LongTermNoteBox.Text = longTermNoteText ?? "";
+                    }
+                    finally
+                    {
+                        applyingRemoteNote = false;
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
 
         private void PlanFutureTask_Click(
@@ -3245,6 +3450,8 @@ namespace LochlanProductivity
             // Keep the quick-add strip in sync (new/deleted groups).
             // Checked state comes from the sticky set, so it survives.
             RefreshTaskGroupStrip();
+
+            ApplyLongTermMode();
         }
 
         private string GetBlockedAppsButtonText(
@@ -7884,6 +8091,163 @@ namespace LochlanProductivity
             content.Children.Add(startupNote);
 
             // ----------------------------------------------------
+            // DAILY PLAN
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Daily Plan",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 58, 46, 40))
+                });
+
+            TextBox dailyMessageBox =
+                new TextBox
+                {
+                    Header = "Daily prompt message",
+                    Text = appSettings.DailyPromptMessage,
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    MinHeight = 64
+                };
+
+            content.Children.Add(dailyMessageBox);
+
+            // Personal strict builds hide this switch entirely (see
+            // AppSettingsManager.AllowDisablingDailyPrompt).
+            if (AppSettingsManager.AllowDisablingDailyPrompt)
+            {
+                ToggleSwitch dailyToggle =
+                    new ToggleSwitch
+                    {
+                        Header = "Ask for today's task every day",
+                        IsOn = appSettings.DailyPromptEnabled
+                    };
+
+                TextBlock dailyNote =
+                    new TextBlock
+                    {
+                        FontSize = 11,
+                        Opacity = 0.7,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground =
+                            new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Microsoft.UI.ColorHelper.FromArgb(
+                                    255, 107, 94, 82)),
+                        Text = "Turning this off requires all tasks " +
+                               "to be complete first."
+                    };
+
+                bool updatingDaily = false;
+
+                dailyToggle.Toggled += async (s, e) =>
+                {
+                    if (updatingDaily)
+                        return;
+
+                    updatingDaily = true;
+
+                    try
+                    {
+                        if (!dailyToggle.IsOn && HasIncompleteTasks)
+                        {
+                            dailyToggle.IsOn = true;
+
+                            await ShowSimpleMessageAsync(
+                                "Complete all tasks before turning " +
+                                "off the daily plan.");
+                        }
+                        else
+                        {
+                            appSettings.DailyPromptEnabled =
+                                dailyToggle.IsOn;
+                            appSettings.Save();
+
+                            UpdateFocusModeLock();
+                        }
+                    }
+                    finally
+                    {
+                        updatingDaily = false;
+                    }
+                };
+
+                content.Children.Add(dailyToggle);
+                content.Children.Add(dailyNote);
+            }
+
+            // ----------------------------------------------------
+            // NOTES
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Notes",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 58, 46, 40))
+                });
+
+            ToggleSwitch stickyNoteToggle =
+                new ToggleSwitch
+                {
+                    Header = "Sticky-note writing area",
+                    IsOn = appSettings.UseStickyNoteMode
+                };
+
+            content.Children.Add(stickyNoteToggle);
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Replace the Long-term list with a " +
+                           "free-writing area for goals and reminders.",
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(
+                                255, 107, 94, 82))
+                });
+
+            bool updatingSticky = false;
+
+            stickyNoteToggle.Toggled += (s, e) =>
+            {
+                if (updatingSticky)
+                    return;
+
+                updatingSticky = true;
+
+                try
+                {
+                    appSettings.UseStickyNoteMode =
+                        stickyNoteToggle.IsOn;
+                    appSettings.Save();
+
+                    ApplyLongTermMode();
+                }
+                finally
+                {
+                    updatingSticky = false;
+                }
+            };
+
+            // ----------------------------------------------------
             // FUTURE SETTINGS GO HERE (new sections above this line)
             // ----------------------------------------------------
 
@@ -7904,6 +8268,23 @@ namespace LochlanProductivity
                 };
 
             await dialog.ShowAsync();
+
+            // Persist the daily message on close (empty = default).
+            string newMessage = dailyMessageBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newMessage))
+            {
+                newMessage =
+                    AppSettingsManager.DefaultDailyPromptMessage;
+            }
+
+            if (!newMessage.Equals(
+                appSettings.DailyPromptMessage,
+                StringComparison.Ordinal))
+            {
+                appSettings.DailyPromptMessage = newMessage;
+                appSettings.Save();
+            }
         }
 
         // ============================================================
@@ -8028,6 +8409,13 @@ namespace LochlanProductivity
     // DATA MODELS
     // ================================================================
 
+
+    public class LongTermNoteData
+    {
+        public string Text { get; set; } = "";
+
+        public DateTime? LastModified { get; set; }
+    }
 
     public class TodoTask
     {

@@ -289,7 +289,9 @@ namespace LochlanProductivity.Services
             IEnumerable<AppGroup> appGroups,
             IEnumerable<BlockingSchedule> blockingSchedules,
             IEnumerable<string> blockedSites,
-            DateTime? lastDailyPromptDate = null)
+            DateTime? lastDailyPromptDate = null,
+            string? longTermNote = null,
+            DateTime? longTermNoteModified = null)
         {
             return new SyncData
             {
@@ -314,7 +316,13 @@ namespace LochlanProductivity.Services
                         blockedSites),
 
                 LastDailyPromptDate =
-                    lastDailyPromptDate?.Date
+                    lastDailyPromptDate?.Date,
+
+                LongTermNote =
+                    longTermNote ?? "",
+
+                LongTermNoteModified =
+                    longTermNoteModified
             };
         }
 
@@ -404,6 +412,8 @@ namespace LochlanProductivity.Services
                 data.BlockedSites ??=
                     new List<string>();
 
+                data.LongTermNote ??= "";
+
                 return data;
             }
             catch (Exception ex)
@@ -437,7 +447,9 @@ namespace LochlanProductivity.Services
             AppGroupManager groupManager,
             ScheduleManager scheduleManager,
             BlockedSitesManager blockedSites,
-            DateTime? lastDailyPromptDate = null)
+            DateTime? lastDailyPromptDate = null,
+            string? longTermNote = null,
+            DateTime? longTermNoteModified = null)
         {
             SyncData data =
                 CreateSyncData(
@@ -445,7 +457,9 @@ namespace LochlanProductivity.Services
                     groupManager.Groups,
                     scheduleManager.Schedules,
                     blockedSites.Domains,
-                    lastDailyPromptDate);
+                    lastDailyPromptDate,
+                    longTermNote,
+                    longTermNoteModified);
 
             return await SaveSyncDataAsync(data);
         }
@@ -459,7 +473,9 @@ namespace LochlanProductivity.Services
             AppGroupManager groupManager,
             ScheduleManager scheduleManager,
             BlockedSitesManager blockedSites,
-            DateTime? localDailyPromptDate = null)
+            DateTime? localDailyPromptDate = null,
+            string? localLongTermNote = null,
+            DateTime? localLongTermNoteModified = null)
         {
             try
             {
@@ -478,7 +494,9 @@ namespace LochlanProductivity.Services
                             groupManager,
                             scheduleManager,
                             blockedSites,
-                            localDailyPromptDate);
+                            localDailyPromptDate,
+                            localLongTermNote,
+                            localLongTermNoteModified);
 
                     return new SyncResult
                     {
@@ -488,7 +506,10 @@ namespace LochlanProductivity.Services
                             ? "Created the shared sync file from this computer."
                             : $"Could not create {SyncFilePath}.",
 
-                        MergedDailyPromptDate = localDailyPromptDate?.Date
+                        MergedDailyPromptDate = localDailyPromptDate?.Date,
+
+                        MergedNoteText = localLongTermNote,
+                        MergedNoteModified = localLongTermNoteModified
                     };
                 }
 
@@ -542,6 +563,40 @@ namespace LochlanProductivity.Services
                     (localPromptDate == null ||
                      remotePromptDate > localPromptDate);
 
+                // Long-term sticky note: newest timestamp wins.
+                DateTime? remoteNoteModified =
+                    sharedData.LongTermNoteModified;
+
+                string remoteNoteText =
+                    sharedData.LongTermNote ?? "";
+
+                string localNoteText = localLongTermNote ?? "";
+
+                string mergedNoteText = localNoteText;
+                DateTime? mergedNoteModified = localLongTermNoteModified;
+
+                if (remoteNoteModified != null &&
+                    (localLongTermNoteModified == null ||
+                     remoteNoteModified > localLongTermNoteModified))
+                {
+                    mergedNoteModified = remoteNoteModified;
+
+                    if (!remoteNoteText.Equals(
+                        localNoteText,
+                        StringComparison.Ordinal))
+                    {
+                        mergedNoteText = remoteNoteText;
+                    }
+                }
+
+                bool noteChanged =
+                    remoteNoteModified != null &&
+                    (localLongTermNoteModified == null ||
+                     remoteNoteModified > localLongTermNoteModified) &&
+                    !remoteNoteText.Equals(
+                        localNoteText,
+                        StringComparison.Ordinal);
+
                 // ----------------------------------------------------
                 // WRITE THE MERGED SNAPSHOT BACK so the other
                 // computer picks up this side's newer items too.
@@ -553,7 +608,9 @@ namespace LochlanProductivity.Services
                         groupManager.Groups,
                         scheduleManager.Schedules,
                         blockedSites.Domains,
-                        mergedPromptDate);
+                        mergedPromptDate,
+                        mergedNoteText,
+                        mergedNoteModified);
 
                 bool saved =
                     await SaveSyncDataAsync(merged);
@@ -573,6 +630,12 @@ namespace LochlanProductivity.Services
                     DailyPromptChanged = dailyPromptChanged,
 
                     MergedDailyPromptDate = mergedPromptDate,
+
+                    NoteChanged = noteChanged,
+
+                    MergedNoteText = mergedNoteText,
+
+                    MergedNoteModified = mergedNoteModified,
 
                     Message = saved
                         ? $"{taskChanges} task(s), {groupChanges} group(s), {scheduleChanges} schedule(s), {siteChanges} site(s) updated."
@@ -961,5 +1024,11 @@ namespace LochlanProductivity.Services
         public bool DailyPromptChanged { get; set; }
 
         public DateTime? MergedDailyPromptDate { get; set; }
+
+        public bool NoteChanged { get; set; }
+
+        public string? MergedNoteText { get; set; }
+
+        public DateTime? MergedNoteModified { get; set; }
     }
 }

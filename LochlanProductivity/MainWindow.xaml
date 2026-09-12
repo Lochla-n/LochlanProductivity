@@ -113,12 +113,14 @@
                 <StackPanel x:Name="TaskList" Spacing="10"/>
             </ScrollViewer>
 
-            <!-- RIGHT RAIL — Long-term on top, Future below, always visible -->
+            <!-- RIGHT RAIL — Long-term on top, Future below. Each list
+                 scrolls inside its own cap so both sections stay on
+                 screen at the same time. -->
             <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="18">
                     <StackPanel x:Name="LongTermSection" Spacing="8">
                         <TextBlock Text="Long-term &amp; Notes" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
-                        <Border Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
+                        <Border x:Name="LongTermInputRow" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" CornerRadius="12" Padding="10">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -128,13 +130,18 @@
                                 <Button Grid.Column="1" Content="Add Note" Margin="10,0,0,0" Click="AddLongTerm_Click" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
                             </Grid>
                         </Border>
-                        <StackPanel x:Name="LongTermTaskList" Spacing="10"/>
+                        <ScrollViewer x:Name="LongTermListScroll" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="LongTermTaskList" Spacing="10"/>
+                        </ScrollViewer>
+                        <TextBox x:Name="LongTermNoteBox" Visibility="Collapsed" PlaceholderText="Jot down goals, ideas, reminders…" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" Foreground="#FF3A2E28" FontFamily="Cambria" FontSize="14" CornerRadius="12" Padding="12" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="180" TextChanged="LongTermNoteBox_TextChanged"/>
                     </StackPanel>
 
                     <StackPanel x:Name="FutureSection" Spacing="8">
                         <TextBlock Text="Coming Up" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85"/>
                         <TextBlock Text="Tasks scheduled for the future — they’ll appear unmarked on their day." FontSize="11" Foreground="#FF6B5E52" Opacity="0.7" TextWrapping="Wrap"/>
-                        <StackPanel x:Name="FutureTaskList" Spacing="10"/>
+                        <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="FutureTaskList" Spacing="10"/>
+                        </ScrollViewer>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

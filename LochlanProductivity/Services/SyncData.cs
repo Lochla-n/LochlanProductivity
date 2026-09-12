@@ -56,5 +56,12 @@ namespace LochlanProductivity.Services
         // ============================================================
 
         public DateTime? LastDailyPromptDate { get; set; }
+
+        // Long-term sticky note (free-writing alternative to the
+        // Long-term list). Newest timestamp wins; missing on old
+        // syncdata.json files.
+        public string LongTermNote { get; set; } = "";
+
+        public DateTime? LongTermNoteModified { get; set; }
     }
 }
