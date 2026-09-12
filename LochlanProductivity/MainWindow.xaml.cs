@@ -306,6 +306,90 @@ namespace LochlanProductivity
             policyManager.ExpandTaskGroups(task);
         }
 
+        // Flat color-dot group toggle shared by the quick-add strip
+        // and the future-task dialog. No check box, no glyph: full
+        // color = on, dimmed = off. System toggle chrome is stripped
+        // so only the dot shows.
+        private ToggleButton BuildGroupDotToggle(
+            AppGroup group,
+            bool initialChecked,
+            Action<string, bool> onToggle)
+        {
+            string groupId = group.Id;
+
+            Border dot =
+                new Border
+                {
+                    Width = 14,
+                    Height = 14,
+                    CornerRadius = new CornerRadius(4),
+                    Background =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            GetGroupColor(group)),
+                    Opacity = initialChecked ? 1.0 : 0.28
+                };
+
+            ToggleButton btn =
+                new ToggleButton
+                {
+                    Content = dot,
+                    IsChecked = initialChecked,
+                    MinWidth = 0,
+                    MinHeight = 0,
+                    Padding = new Thickness(3, 2, 3, 2),
+                    Margin = new Thickness(1, 0, 1, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    BorderThickness = new Thickness(0)
+                };
+
+            Microsoft.UI.Xaml.Media.SolidColorBrush clear =
+                new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0));
+
+            btn.Background = clear;
+            btn.BorderBrush = clear;
+
+            foreach (string chromeKey in new[]
+            {
+                "ToggleButtonBackground",
+                "ToggleButtonBackgroundPointerOver",
+                "ToggleButtonBackgroundPressed",
+                "ToggleButtonBackgroundDisabled",
+                "ToggleButtonBackgroundChecked",
+                "ToggleButtonBackgroundCheckedPointerOver",
+                "ToggleButtonBackgroundCheckedPressed",
+                "ToggleButtonBackgroundCheckedDisabled",
+                "ToggleButtonBorderBrush",
+                "ToggleButtonBorderBrushPointerOver",
+                "ToggleButtonBorderBrushPressed",
+                "ToggleButtonBorderBrushDisabled",
+                "ToggleButtonBorderBrushChecked",
+                "ToggleButtonBorderBrushCheckedPointerOver",
+                "ToggleButtonBorderBrushCheckedPressed",
+                "ToggleButtonBorderBrushCheckedDisabled"
+            })
+            {
+                btn.Resources[chromeKey] = clear;
+            }
+
+            ToolTipService.SetToolTip(
+                btn,
+                $"{group.Name} " +
+                $"({group.Apps.Count} app" +
+                $"{(group.Apps.Count == 1 ? "" : "s")})");
+
+            btn.Click += (s, e) =>
+            {
+                bool on = btn.IsChecked == true;
+
+                onToggle(groupId, on);
+
+                dot.Opacity = on ? 1.0 : 0.28;
+            };
+
+            return btn;
+        }
+
         private void RefreshTaskGroupStrip()
         {
             try
@@ -324,86 +408,20 @@ namespace LochlanProductivity
                     bool isChecked =
                         stickyBlockedGroupIds.Contains(groupId);
 
-                    // Just a flat color dot - no check box, no glyph.
-                    // Full color = blocks, dimmed = off.
-                    Border dot =
-                        new Border
+                    ToggleButton btn = BuildGroupDotToggle(
+                        group,
+                        isChecked,
+                        (id, on) =>
                         {
-                            Width = 14,
-                            Height = 14,
-                            CornerRadius = new CornerRadius(4),
-                            Background =
-                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    GetGroupColor(group)),
-                            Opacity = isChecked ? 1.0 : 0.28
-                        };
+                            if (on)
+                                stickyBlockedGroupIds.Add(id);
+                            else
+                                stickyBlockedGroupIds.Remove(id);
 
-                    ToggleButton btn =
-                        new ToggleButton
-                        {
-                            Content = dot,
-                            IsChecked = isChecked,
-                            MinWidth = 0,
-                            MinHeight = 0,
-                            Padding = new Thickness(3, 2, 3, 2),
-                            Margin = new Thickness(1, 0, 1, 0),
-                            VerticalAlignment = VerticalAlignment.Center,
-                            BorderThickness = new Thickness(0)
-                        };
-
-                    // Strip the system toggle chrome (accent fill, hover
-                    // fill, borders) so only the flat color dot shows.
-                    Microsoft.UI.Xaml.Media.SolidColorBrush clear =
-                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0));
-
-                    btn.Background = clear;
-                    btn.BorderBrush = clear;
-
-                    foreach (string chromeKey in new[]
-                    {
-                        "ToggleButtonBackground",
-                        "ToggleButtonBackgroundPointerOver",
-                        "ToggleButtonBackgroundPressed",
-                        "ToggleButtonBackgroundDisabled",
-                        "ToggleButtonBackgroundChecked",
-                        "ToggleButtonBackgroundCheckedPointerOver",
-                        "ToggleButtonBackgroundCheckedPressed",
-                        "ToggleButtonBackgroundCheckedDisabled",
-                        "ToggleButtonBorderBrush",
-                        "ToggleButtonBorderBrushPointerOver",
-                        "ToggleButtonBorderBrushPressed",
-                        "ToggleButtonBorderBrushDisabled",
-                        "ToggleButtonBorderBrushChecked",
-                        "ToggleButtonBorderBrushCheckedPointerOver",
-                        "ToggleButtonBorderBrushCheckedPressed",
-                        "ToggleButtonBorderBrushCheckedDisabled"
-                    })
-                    {
-                        btn.Resources[chromeKey] = clear;
-                    }
-
-                    ToolTipService.SetToolTip(
-                        btn,
-                        $"{group.Name} " +
-                        $"({group.Apps.Count} app" +
-                        $"{(group.Apps.Count == 1 ? "" : "s")})");
-
-                    btn.Click += (s, e) =>
-                    {
-                        bool on = btn.IsChecked == true;
-
-                        if (on)
-                            stickyBlockedGroupIds.Add(groupId);
-                        else
-                            stickyBlockedGroupIds.Remove(groupId);
-
-                        appSettings.StickyBlockedGroupIds =
-                            stickyBlockedGroupIds.ToList();
-                        appSettings.Save();
-
-                        dot.Opacity = on ? 1.0 : 0.28;
-                    };
+                            appSettings.StickyBlockedGroupIds =
+                                stickyBlockedGroupIds.ToList();
+                            appSettings.Save();
+                        });
 
                     TaskGroupStrip.Children.Add(btn);
                 }
@@ -2146,6 +2164,143 @@ namespace LochlanProductivity
             await SaveTasksAsync();
             LongTermInput.Text = "";
             RefreshTaskList();
+        }
+
+        private void PlanFutureTask_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            _ = OpenPlanFutureTaskDialogAsync();
+        }
+
+        // One-shot future planning (not recurring): title + the same
+        // color-dot group toggles as the quick-add strip + a calendar
+        // to tap the day. Lands in Coming Up until its day arrives.
+        private async System.Threading.Tasks.Task OpenPlanFutureTaskDialogAsync()
+        {
+            TextBox titleBox =
+                new TextBox
+                {
+                    PlaceholderText = "What needs doing?",
+                    AcceptsReturn = false
+                };
+
+            HashSet<string> selectedGroups =
+                new HashSet<string>(
+                    stickyBlockedGroupIds,
+                    StringComparer.OrdinalIgnoreCase);
+
+            selectedGroups.RemoveWhere(
+                id => groupManager.GetGroup(id) == null);
+
+            StackPanel dotRow =
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 1
+                };
+
+            foreach (AppGroup group in groupManager.Groups)
+            {
+                dotRow.Children.Add(
+                    BuildGroupDotToggle(
+                        group,
+                        selectedGroups.Contains(group.Id),
+                        (id, on) =>
+                        {
+                            if (on)
+                                selectedGroups.Add(id);
+                            else
+                                selectedGroups.Remove(id);
+                        }));
+            }
+
+            CalendarDatePicker datePicker =
+                new CalendarDatePicker
+                {
+                    Header = "Due date",
+                    Date = DateTimeOffset.Now.Date.AddDays(1),
+                    MinDate = DateTimeOffset.Now.Date
+                };
+
+            StackPanel content =
+                new StackPanel
+                {
+                    Spacing = 10
+                };
+
+            content.Children.Add(titleBox);
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Blocks",
+                    FontSize = 13,
+                    Opacity = 0.7
+                });
+
+            content.Children.Add(dotRow);
+            content.Children.Add(datePicker);
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Plan Future Task",
+                    Content = content,
+                    PrimaryButtonText = "Add",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+            titleBox.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+
+            string title = titleBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                await ShowSimpleMessageAsync("Please enter a task name.");
+                return;
+            }
+
+            DateTime due =
+                (datePicker.Date ?? DateTimeOffset.Now.Date.AddDays(1)).Date;
+
+            TodoTask task =
+                new TodoTask
+                {
+                    Title = title,
+                    IsCompleted = false,
+                    DueDate = due,
+                    BlockedGroups = new List<string>()
+                };
+
+            foreach (string groupId in selectedGroups)
+            {
+                if (groupManager.GetGroup(groupId) == null)
+                    continue;
+
+                if (!task.BlockedGroups.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                {
+                    task.BlockedGroups.Add(groupId);
+                }
+            }
+
+            policyManager.ExpandTaskGroups(task);
+
+            tasks.Add(task);
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+
+            // In case the picked day is today, arm blocking instantly.
+            UpdateWebsiteBlockingState();
         }
 
         private async void AddTask()
