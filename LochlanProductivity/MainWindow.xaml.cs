@@ -1159,6 +1159,32 @@ namespace LochlanProductivity
                 return;
             }
 
+            // Never stack two required dialogs (startup + wake paths
+            // can race each other).
+            if (dailyPromptActive)
+            {
+                return;
+            }
+
+            dailyPromptActive = true;
+
+            try
+            {
+                await CheckDailyPromptCoreAsync();
+            }
+            finally
+            {
+                dailyPromptActive = false;
+            }
+        }
+
+        private async System.Threading.Tasks.Task CheckDailyPromptCoreAsync()
+        {
+            if (!dailyPromptManager.ShouldShowPrompt())
+            {
+                return;
+            }
+
             // Ensure the window is visible and blocking is engaged
             // while the daily plan is missing. On first launch after
             // reboot the window may not yet have a XamlRoot, so wait
@@ -1867,12 +1893,35 @@ namespace LochlanProductivity
             blockingTimer = null;
         }
 
+        private DateTime lastBlockingTickUtc = DateTime.UtcNow;
+
+        private bool dailyPromptActive;
+
         private void BlockingTimer_Tick(
             object? sender,
             object e)
         {
             try
             {
+                // Wake-from-sleep (lid closed, not shut down): no Run
+                // key or StartupTask fires on resume, so detect the
+                // gap in ticks and bring the window back ourselves.
+                DateTime nowUtc = DateTime.UtcNow;
+                bool justWoke =
+                    (nowUtc - lastBlockingTickUtc).TotalSeconds > 60;
+                lastBlockingTickUtc = nowUtc;
+
+                if (justWoke && !dailyPromptActive)
+                {
+                    HostsFileBlocker.Log("wake from sleep detected");
+
+                    ShowMainWindow();
+
+                    // Guarded inside: no-ops if already prompting or
+                    // if today's plan is done.
+                    _ = CheckDailyPromptAsync();
+                }
+
                 // Heartbeat every 10s so a dead or stuck tick is
                 // visible in webblock.log instead of silent.
                 if (++tickHeartbeatCounter >= 10)
@@ -2266,9 +2315,13 @@ namespace LochlanProductivity
                         new TextBlock
                         {
                             Text = "No tasks due this day.",
-                            Opacity = 0.55,
+                            Opacity = 0.7,
                             FontSize = 12,
-                            FontStyle = Windows.UI.Text.FontStyle.Italic
+                            FontStyle = Windows.UI.Text.FontStyle.Italic,
+                            Foreground =
+                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                    Microsoft.UI.ColorHelper.FromArgb(
+                                        255, 107, 94, 82))
                         });
 
                     return;
@@ -2373,7 +2426,11 @@ namespace LochlanProductivity
                     Title = "Upcoming & Recurring",
                     Content = content,
                     CloseButtonText = "Close",
-                    XamlRoot = this.Content.XamlRoot
+                    XamlRoot = this.Content.XamlRoot,
+                    // Force light: the hardcoded ink text and the
+                    // native month grid both wash out when Windows
+                    // is in dark mode.
+                    RequestedTheme = ElementTheme.Light
                 };
 
             await dialog.ShowAsync();
@@ -2429,6 +2486,13 @@ namespace LochlanProductivity
                     MinDate = DateTimeOffset.Now.Date
                 };
 
+            // Calendar starts already open so the day is one tap away.
+            datePicker.Loaded += (s, e) =>
+            {
+                try { datePicker.IsCalendarOpen = true; }
+                catch { }
+            };
+
             StackPanel content =
                 new StackPanel
                 {
@@ -2456,7 +2520,10 @@ namespace LochlanProductivity
                     PrimaryButtonText = "Add",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = this.Content.XamlRoot
+                    XamlRoot = this.Content.XamlRoot,
+                    // Force light so the ink text and calendar stay
+                    // readable even when Windows is in dark mode.
+                    RequestedTheme = ElementTheme.Light
                 };
 
             titleBox.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
@@ -7577,7 +7644,9 @@ namespace LochlanProductivity
                 // doesn't always re-enable via StartupTask, and MSIX
                 // virtualizes the Run key — set the real HKCU Run key
                 // directly so startup actually sticks even if the user
-                // toggled it off once.
+                // toggled it off once. Always overwritten (not just
+                // when missing): a stale Debug path otherwise survives
+                // forever while the Release build is what runs.
                 try
                 {
                     using Microsoft.Win32.RegistryKey? key =
@@ -7589,12 +7658,23 @@ namespace LochlanProductivity
                     {
                         string? exe = Environment.ProcessPath;
 
-                        if (!string.IsNullOrWhiteSpace(exe) &&
-                            key.GetValue("LochlanProductivity") == null)
+                        if (!string.IsNullOrWhiteSpace(exe))
                         {
-                            key.SetValue(
-                                "LochlanProductivity",
-                                $"\"{exe}\"");
+                            string wanted = $"\"{exe}\"";
+
+                            string? current =
+                                key.GetValue(
+                                    "LochlanProductivity") as string;
+
+                            if (!string.Equals(
+                                current,
+                                wanted,
+                                StringComparison.OrdinalIgnoreCase))
+                            {
+                                key.SetValue(
+                                    "LochlanProductivity",
+                                    wanted);
+                            }
                         }
                     }
                 }
