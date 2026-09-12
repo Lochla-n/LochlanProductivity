@@ -1,6 +1,7 @@
 using LochlanProductivity.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using System;
 using System.Collections.Generic;
@@ -208,56 +209,88 @@ namespace LochlanProductivity
                     bool isChecked =
                         stickyBlockedGroupIds.Contains(groupId);
 
+                    // Just a flat color dot - no check box, no glyph.
+                    // Full color = blocks, dimmed = off.
                     Border dot =
                         new Border
                         {
-                            Width = 13,
-                            Height = 13,
-                            CornerRadius = new CornerRadius(3),
+                            Width = 14,
+                            Height = 14,
+                            CornerRadius = new CornerRadius(4),
                             Background =
                                 new Microsoft.UI.Xaml.Media.SolidColorBrush(
                                     GetGroupColor(group)),
-                            BorderBrush =
-                                new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    Microsoft.UI.ColorHelper.FromArgb(
-                                        255, 150, 160, 155)),
-                            BorderThickness = new Thickness(1)
+                            Opacity = isChecked ? 1.0 : 0.28
                         };
 
-                    CheckBox box =
-                        new CheckBox
+                    ToggleButton btn =
+                        new ToggleButton
                         {
                             Content = dot,
                             IsChecked = isChecked,
                             MinWidth = 0,
-                            Padding = new Thickness(2, 0, 2, 0),
+                            MinHeight = 0,
+                            Padding = new Thickness(3, 2, 3, 2),
                             Margin = new Thickness(1, 0, 1, 0),
-                            VerticalAlignment = VerticalAlignment.Center
+                            VerticalAlignment = VerticalAlignment.Center,
+                            BorderThickness = new Thickness(0)
                         };
 
+                    // Strip the system toggle chrome (accent fill, hover
+                    // fill, borders) so only the flat color dot shows.
+                    Microsoft.UI.Xaml.Media.SolidColorBrush clear =
+                        new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0));
+
+                    btn.Background = clear;
+                    btn.BorderBrush = clear;
+
+                    foreach (string chromeKey in new[]
+                    {
+                        "ToggleButtonBackground",
+                        "ToggleButtonBackgroundPointerOver",
+                        "ToggleButtonBackgroundPressed",
+                        "ToggleButtonBackgroundDisabled",
+                        "ToggleButtonBackgroundChecked",
+                        "ToggleButtonBackgroundCheckedPointerOver",
+                        "ToggleButtonBackgroundCheckedPressed",
+                        "ToggleButtonBackgroundCheckedDisabled",
+                        "ToggleButtonBorderBrush",
+                        "ToggleButtonBorderBrushPointerOver",
+                        "ToggleButtonBorderBrushPressed",
+                        "ToggleButtonBorderBrushDisabled",
+                        "ToggleButtonBorderBrushChecked",
+                        "ToggleButtonBorderBrushCheckedPointerOver",
+                        "ToggleButtonBorderBrushCheckedPressed",
+                        "ToggleButtonBorderBrushCheckedDisabled"
+                    })
+                    {
+                        btn.Resources[chromeKey] = clear;
+                    }
+
                     ToolTipService.SetToolTip(
-                        box,
+                        btn,
                         $"{group.Name} " +
                         $"({group.Apps.Count} app" +
                         $"{(group.Apps.Count == 1 ? "" : "s")})");
 
-                    box.Checked += (s, e) =>
+                    btn.Click += (s, e) =>
                     {
-                        stickyBlockedGroupIds.Add(groupId);
+                        bool on = btn.IsChecked == true;
+
+                        if (on)
+                            stickyBlockedGroupIds.Add(groupId);
+                        else
+                            stickyBlockedGroupIds.Remove(groupId);
+
                         appSettings.StickyBlockedGroupIds =
                             stickyBlockedGroupIds.ToList();
                         appSettings.Save();
+
+                        dot.Opacity = on ? 1.0 : 0.28;
                     };
 
-                    box.Unchecked += (s, e) =>
-                    {
-                        stickyBlockedGroupIds.Remove(groupId);
-                        appSettings.StickyBlockedGroupIds =
-                            stickyBlockedGroupIds.ToList();
-                        appSettings.Save();
-                    };
-
-                    TaskGroupStrip.Children.Add(box);
+                    TaskGroupStrip.Children.Add(btn);
                 }
             }
             catch
