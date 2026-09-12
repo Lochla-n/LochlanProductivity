@@ -46,6 +46,12 @@ namespace LochlanProductivity
                 return;
 
             DateTime syncedDay = syncedDate.Value.Date;
+            DateTime today = DateTime.Now.Date;
+
+            // Never apply a future date — it would suppress today's
+            // required prompt. The other machine's clock may be ahead.
+            if (syncedDay > today)
+                return;
 
             if (syncedDay <= data.LastPromptDate.Date)
                 return;

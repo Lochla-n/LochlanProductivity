@@ -628,6 +628,31 @@ namespace LochlanProductivity.Services
                     continue;
                 }
 
+                // Deletions are tombstones — they must stick. If either
+                // side is already deleted, keep it deleted and never
+                // resurrect from the other side's newer edit.
+                if (existing.IsDeleted)
+                {
+                    // Keep tombstone, but bump LastModified so the
+                    // deletion propagates if incoming is newer.
+                    if (incomingTask.LastModified > existing.LastModified)
+                    {
+                        existing.LastModified = incomingTask.LastModified;
+                        changes++;
+                    }
+                    continue;
+                }
+
+                if (incomingTask.IsDeleted && !existing.IsDeleted)
+                {
+                    existing.IsDeleted = true;
+                    existing.LastModified = incomingTask.LastModified > existing.LastModified
+                        ? incomingTask.LastModified
+                        : DateTime.UtcNow;
+                    changes++;
+                    continue;
+                }
+
                 if (incomingTask.LastModified > existing.LastModified)
                 {
                     CopyTaskInto(existing, incomingTask);

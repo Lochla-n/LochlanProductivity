@@ -1065,9 +1065,14 @@ namespace LochlanProductivity
             }
 
             // Ensure the window is visible and blocking is engaged
-            // while the daily plan is missing.
+            // while the daily plan is missing. On first launch after
+            // reboot the window may not yet have a XamlRoot, so wait
+            // briefly and retry — otherwise the required dialog would
+            // silently fail to show.
             ShowMainWindow();
             UpdateFocusModeLock();
+
+            int promptAttempts = 0;
 
             while (true)
             {
@@ -1101,6 +1106,22 @@ namespace LochlanProductivity
 
                 dialogContent.Children.Add(taskBox);
 
+                // XamlRoot can be null on the very first tick after
+                // cold start before the window is fully activated.
+                // Wait a moment and retry instead of silently failing.
+                if (this.Content?.XamlRoot == null)
+                {
+                    if (++promptAttempts > 20)
+                    {
+                        HostsFileBlocker.Log("daily prompt: XamlRoot still null after retries");
+                        break;
+                    }
+
+                    await System.Threading.Tasks.Task.Delay(500);
+                    ShowMainWindow();
+                    continue;
+                }
+
                 ContentDialog dialog =
                     new ContentDialog
                     {
@@ -1123,8 +1144,23 @@ namespace LochlanProductivity
                             this.Content.XamlRoot
                     };
 
-                ContentDialogResult result =
-                    await dialog.ShowAsync();
+                ContentDialogResult result;
+
+                try
+                {
+                    result = await dialog.ShowAsync();
+                }
+                catch (Exception ex)
+                {
+                    HostsFileBlocker.Log($"daily prompt ShowAsync failed: {ex.Message}");
+
+                    if (++promptAttempts > 5)
+                        break;
+
+                    await System.Threading.Tasks.Task.Delay(500);
+                    ShowMainWindow();
+                    continue;
+                }
 
                 if (result != ContentDialogResult.Primary)
                 {
@@ -1718,7 +1754,7 @@ namespace LochlanProductivity
                 new DispatcherTimer
                 {
                     Interval =
-                        TimeSpan.FromSeconds(1)
+                        TimeSpan.FromSeconds(2.5)
                 };
 
             blockingTimer.Tick += BlockingTimer_Tick;

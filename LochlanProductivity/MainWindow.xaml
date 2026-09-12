@@ -32,7 +32,6 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="4">
                 <TextBlock Text="Today's Tasks" FontSize="30" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28"/>
-                <TextBlock Text="Complete your tasks to unlock — focus stays frost-clean until done." FontSize="12.5" FontFamily="Segoe UI Variable Text" Foreground="#FF6B5E52" Opacity="0.95"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
