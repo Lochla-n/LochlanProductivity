@@ -493,6 +493,22 @@ namespace LochlanProductivity
 
         private async System.Threading.Tasks.Task InitializeAsync()
         {
+            // First run: disclose what the blocker does to the system
+            // before anything enforces. Declining quits the app.
+            if (!appSettings.ConsentAccepted)
+            {
+                bool accepted = await ShowConsentDialogAsync();
+
+                if (!accepted)
+                {
+                    ForceQuit();
+                    return;
+                }
+
+                appSettings.ConsentAccepted = true;
+                appSettings.Save();
+            }
+
             // Ensure the app launches at Windows startup (required
             // once-per-day daily prompt cannot work if the app never
             // opens). Best-effort; respects DisabledByPolicy.
@@ -7374,57 +7390,6 @@ namespace LochlanProductivity
         }
 
 
-        private async void SyncNowButton_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            // While focus is enforcing, completions from the other
-            // computer do not unlock tasks here (MergeTasks preserves
-            // local incomplete). New tasks and edits still sync, so
-            // it is safe to allow Sync Now at any time.
-
-            SyncResult result =
-                await syncManager.SyncNowAsync(
-                    tasks,
-                    groupManager,
-                    scheduleManager,
-                    blockedSiteStore,
-                    dailyPromptManager.LastPromptDate);
-
-            if (result.DailyPromptChanged)
-            {
-                dailyPromptManager.ApplySyncedDate(
-                    result.MergedDailyPromptDate);
-            }
-
-            if (result.Success)
-            {
-                // Merged items may have changed anything - refresh
-                // the whole UI state.
-                RefreshTaskList();
-
-                UpdateFocusModeLock();
-
-                UpdateScheduledBlockingState();
-
-                if (result.SiteChanges > 0)
-                {
-                    // New sites arrived from the other computer -
-                    // force the hosts file to pick them up.
-                    websiteBlocksApplied = null;
-                }
-
-                UpdateWebsiteBlockingState();
-
-                EnforceBlocking();
-            }
-
-            await ShowSimpleMessageAsync(
-                result.Success
-                    ? $"Sync complete.\n\n{result.Message}"
-                    : $"Sync failed.\n\n{result.Message}");
-        }
-
         private async void SyncFolderButton_Click(
             object sender,
             RoutedEventArgs e)
@@ -7602,6 +7567,177 @@ namespace LochlanProductivity
             catch
             {
                 return false;
+            }
+        }
+
+        // ============================================================
+        // BACKUP EXPORT / IMPORT
+        //
+        // A backup is a SyncData snapshot (tasks, groups, schedules,
+        // sites, daily date, note) written to a user-picked file.
+        // Import replaces local state after confirmation.
+        // ============================================================
+
+        private async void ExportBackupButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                FileSavePicker picker =
+                    new FileSavePicker
+                    {
+                        SuggestedStartLocation =
+                            PickerLocationId.DocumentsLibrary,
+                        SuggestedFileName =
+                            $"lochlan-backup-{DateTime.Now:yyyy-MM-dd}"
+                    };
+
+                picker.FileTypeChoices.Add(
+                    "JSON backup",
+                    new List<string> { ".json" });
+
+                IntPtr hwnd =
+                    WindowNative.GetWindowHandle(this);
+
+                InitializeWithWindow.Initialize(picker, hwnd);
+
+                StorageFile? file =
+                    await picker.PickSaveFileAsync();
+
+                if (file == null)
+                    return;
+
+                SyncData snapshot =
+                    syncManager.CreateSyncData(
+                        tasks,
+                        groupManager.Groups,
+                        scheduleManager.Schedules,
+                        blockedSiteStore.Domains,
+                        dailyPromptManager.LastPromptDate,
+                        longTermNoteText,
+                        longTermNoteModified);
+
+                string json =
+                    JsonSerializer.Serialize(
+                        snapshot,
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = true
+                        });
+
+                await File.WriteAllTextAsync(file.Path, json);
+
+                await ShowSimpleMessageAsync(
+                    $"Backup saved to:\n{file.Path}");
+            }
+            catch (Exception ex)
+            {
+                await ShowSimpleMessageAsync(
+                    $"Export failed.\n\n{ex.Message}");
+            }
+        }
+
+        private async void ImportBackupButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                FileOpenPicker picker =
+                    new FileOpenPicker
+                    {
+                        ViewMode = PickerViewMode.List,
+                        SuggestedStartLocation =
+                            PickerLocationId.DocumentsLibrary
+                    };
+
+                picker.FileTypeFilter.Add(".json");
+
+                IntPtr hwnd =
+                    WindowNative.GetWindowHandle(this);
+
+                InitializeWithWindow.Initialize(picker, hwnd);
+
+                StorageFile? file =
+                    await picker.PickSingleFileAsync();
+
+                if (file == null)
+                    return;
+
+                SyncData? backup;
+
+                try
+                {
+                    backup =
+                        JsonSerializer.Deserialize<SyncData>(
+                            await File.ReadAllTextAsync(file.Path),
+                            new JsonSerializerOptions
+                            {
+                                PropertyNameCaseInsensitive = true
+                            });
+                }
+                catch
+                {
+                    backup = null;
+                }
+
+                if (backup == null)
+                {
+                    await ShowSimpleMessageAsync(
+                        "That file is not a valid backup.");
+
+                    return;
+                }
+
+                bool confirmed = await ShowConfirmationAsync(
+                    "Import Backup",
+                    "Replace ALL local tasks, groups, schedules, " +
+                    "sites, and notes with this backup?\n\n" +
+                    "Your current state will be overwritten. " +
+                    "Export a backup first if you are unsure.");
+
+                if (!confirmed)
+                    return;
+
+                tasks.Clear();
+                tasks.AddRange(backup.Tasks ?? new());
+
+                groupManager.ReplaceGroups(backup.AppGroups ?? new());
+                scheduleManager.ReplaceSchedules(
+                    backup.BlockingSchedules ?? new());
+
+                blockedSiteStore.Replace(
+                    backup.BlockedSites ?? new());
+
+                if (backup.LastDailyPromptDate != null)
+                {
+                    dailyPromptManager.ApplySyncedDate(
+                        backup.LastDailyPromptDate);
+                }
+
+                longTermNoteText = backup.LongTermNote ?? "";
+                longTermNoteModified = backup.LongTermNoteModified;
+                await SaveLongTermNoteAsync();
+
+                await SaveTasksAsync();
+                await SaveAppGroupsAsync();
+                QueueAutoSync();
+
+                RefreshTaskList();
+                UpdateFocusModeLock();
+                UpdateScheduledBlockingState();
+                websiteBlocksApplied = null;
+                UpdateWebsiteBlockingState();
+                UpdateBlockingStatus();
+
+                await ShowSimpleMessageAsync(
+                    "Backup imported.");
+            }
+            catch (Exception ex)
+            {
+                await ShowSimpleMessageAsync(
+                    $"Import failed.\n\n{ex.Message}");
             }
         }
 
@@ -8076,6 +8212,81 @@ namespace LochlanProductivity
             }
 
             this.Activate();
+        }
+
+        private async System.Threading.Tasks.Task<bool> ShowConsentDialogAsync()
+        {
+            TextBlock body =
+                new TextBlock
+                {
+                    Text =
+                        "Welcome to Lochlan Productivity.\n\n" +
+                        "To block distractions, this app will, only while " +
+                        "your tasks are incomplete:\n\n" +
+                        "• Close apps you marked as blocked\n" +
+                        "• Edit the Windows hosts file to block websites " +
+                        "(asks for admin permission once)\n" +
+                        "• Turn off browser secure-DNS while blocking\n" +
+                        "• Start with Windows so blocking survives reboots\n\n" +
+                        "Nothing leaves your computer except through the " +
+                        "optional sync folder you configure. " +
+                        "Uninstalling: remove the scheduled task " +
+                        "\"LochlanProductivityHosts\", the HKCU Run entry, " +
+                        "and the marked hosts-file section (see README).",
+
+                    TextWrapping = TextWrapping.Wrap,
+                    Opacity = 0.85
+                };
+
+            ContentDialog dialog =
+                new ContentDialog
+                {
+                    Title = "Before you start",
+                    Content = new ScrollViewer
+                    {
+                        Content = body,
+                        MaxHeight = 400,
+                        VerticalScrollBarVisibility =
+                            ScrollBarVisibility.Auto
+                    },
+                    PrimaryButtonText = "I understand — start",
+                    CloseButtonText = "Quit",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = this.Content.XamlRoot,
+                    RequestedTheme = CurrentDialogTheme
+                };
+
+            ContentDialogResult result = await dialog.ShowAsync();
+
+            return result == ContentDialogResult.Primary;
+        }
+
+        private void ForceQuit()
+        {
+            try
+            {
+                trayIconManager?.Dispose();
+                trayIconManager = null;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                App.CurrentApp?.ExitApplication();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Application.Current.Exit();
+            }
+            catch
+            {
+            }
         }
 
         private async System.Threading.Tasks.Task
@@ -8578,6 +8789,110 @@ namespace LochlanProductivity
                 new TextBlock
                 {
                     Text = "Custom starts from Frost; edit any slot.",
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = TB(currentTheme.MutedText)
+                });
+
+            // ----------------------------------------------------
+            // CLEANUP (uninstall leftovers)
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Cleanup",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground = TB(currentTheme.InkText)
+                });
+
+            Button cleanupButton =
+                new Button
+                {
+                    Content = "Remove blocking leftovers",
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+
+            cleanupButton.Click += async (s, e) =>
+            {
+                bool confirmed = await ShowConfirmationAsync(
+                    "Remove Leftovers",
+                    "Remove the hosts-file block section, browser " +
+                    "DNS policies, the scheduled helper task, and " +
+                    "the start-with-Windows entry?\n\n" +
+                    "Use this before uninstalling.");
+
+                if (!confirmed)
+                    return;
+
+                List<string> removed = new();
+                List<string> failed = new();
+
+                try
+                {
+                    if (hostsFileBlocker.Remove())
+                        removed.Add("hosts block section");
+                    else
+                        failed.Add("hosts block section");
+                }
+                catch { failed.Add("hosts block section"); }
+
+                try
+                {
+                    hostsFileBlocker.RemoveBrowserDnsPolicies();
+                    removed.Add("browser DNS policies");
+                }
+                catch { failed.Add("browser DNS policies"); }
+
+                try
+                {
+                    if (HostsFileBlocker.DeleteHelperTask())
+                        removed.Add("scheduled helper task");
+                    else
+                        failed.Add("scheduled helper task");
+                }
+                catch { failed.Add("scheduled helper task"); }
+
+                try
+                {
+                    using Microsoft.Win32.RegistryKey? key =
+                        Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                            @"Software\Microsoft\Windows\CurrentVersion\Run",
+                            true);
+
+                    key?.DeleteValue(
+                        "LochlanProductivity",
+                        false);
+
+                    removed.Add("start-with-Windows entry");
+                }
+                catch { failed.Add("start-with-Windows entry"); }
+
+                websiteBlocksApplied = null;
+
+                await UpdateStartupToggleButtonAsync();
+
+                await ShowSimpleMessageAsync(
+                    (removed.Count > 0
+                        ? "Removed: " + string.Join(", ", removed) + ".\n\n"
+                        : "") +
+                    (failed.Count > 0
+                        ? "Could not remove (may need admin): " +
+                          string.Join(", ", failed) + "."
+                        : "All clear."));
+            };
+
+            content.Children.Add(cleanupButton);
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Run this before uninstalling so no " +
+                           "system changes are left behind.",
                     FontSize = 11,
                     Opacity = 0.7,
                     TextWrapping = TextWrapping.Wrap,

@@ -54,6 +54,10 @@ namespace LochlanProductivity.Services
         // for presets; custom colors live below).
         public string ThemeName { get; set; } = "Frost";
 
+        // First-run consent to the blocking methods (hosts file,
+        // scheduled task, registry, process closing). Asked once.
+        public bool ConsentAccepted { get; set; } = false;
+
         // Custom theme overrides: slot name -> "#AARRGGBB". Missing or
         // invalid entries fall back to Frost. Edited in Settings.
         public Dictionary<string, string> CustomThemeColors { get; set; } =
@@ -119,7 +123,10 @@ namespace LochlanProductivity.Services
                                     StringComparer.OrdinalIgnoreCase),
 
                             CustomThemeIsDark =
-                                CustomThemeIsDark
+                                CustomThemeIsDark,
+
+                            ConsentAccepted =
+                                ConsentAccepted
                         },
                         new JsonSerializerOptions
                         {
@@ -201,6 +208,9 @@ namespace LochlanProductivity.Services
                 CustomThemeIsDark =
                     loaded.CustomThemeIsDark;
 
+                ConsentAccepted =
+                    loaded.ConsentAccepted;
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -248,6 +258,8 @@ namespace LochlanProductivity.Services
             public Dictionary<string, string>? CustomThemeColors { get; set; }
 
             public bool CustomThemeIsDark { get; set; }
+
+            public bool ConsentAccepted { get; set; }
         }
     }
 }

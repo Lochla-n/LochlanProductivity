@@ -50,6 +50,9 @@
                             <MenuFlyoutItem Text="Blocked Websites" Click="BlockedSitesButton_Click"/>
                             <MenuFlyoutItem Text="Sync Folder" Click="SyncFolderButton_Click"/>
                             <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="Export Backup…" Click="ExportBackupButton_Click"/>
+                            <MenuFlyoutItem Text="Import Backup…" Click="ImportBackupButton_Click"/>
+                            <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Settings" Click="SettingsButton_Click"/>
                         </MenuFlyout>
                     </Button.Flyout>

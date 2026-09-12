@@ -529,6 +529,43 @@ namespace LochlanProductivity.Services
             }
         }
 
+        // Used by uninstall cleanup: removes the helper task so no
+        // elevated component is left behind.
+        public static bool DeleteHelperTask()
+        {
+            try
+            {
+                ProcessStartInfo delete =
+                    new ProcessStartInfo(
+                        "schtasks",
+                        $"/Delete /TN \"{TaskName}\" /F")
+                    {
+                        UseShellExecute = false,
+
+                        CreateNoWindow = true
+                    };
+
+                using Process? process =
+                    Process.Start(delete);
+
+                process?.WaitForExit(5000);
+
+                bool done = process?.ExitCode == 0;
+
+                Log(done
+                    ? "helper task deleted"
+                    : $"helper task delete failed ({process?.ExitCode})");
+
+                return done;
+            }
+            catch (Exception ex)
+            {
+                Log($"helper task delete error: {ex.Message}");
+
+                return false;
+            }
+        }
+
         private static bool RunHelperTask()
         {
             try
@@ -875,6 +912,36 @@ namespace LochlanProductivity.Services
         public bool ContainsAll(IEnumerable<string> domains) =>
             domains.All(d =>
                 Domains.Contains(d, StringComparer.OrdinalIgnoreCase));
+
+        // Used by backup import: wholesale replace.
+        public void Replace(IEnumerable<string> domains)
+        {
+            Domains.Clear();
+
+            foreach (string domain in domains)
+            {
+                string? normalized =
+                    HostsFileBlocker.NormalizeDomain(domain);
+
+                if (normalized == null)
+                    continue;
+
+                if (Domains.Any(
+                    existing =>
+                        existing.Equals(
+                            normalized,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                Domains.Add(normalized);
+            }
+
+            Domains.Sort(StringComparer.Ordinal);
+
+            Save();
+        }
 
         private void Load()
         {

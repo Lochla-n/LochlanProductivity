@@ -24,6 +24,134 @@ namespace LochlanProductivity.Services
             IsScheduledMonitoring;
 
         // ============================================================
+        // PROCESS SNAPSHOT CACHE
+        //
+        // A full Process.GetProcesses() enumeration (plus MainModule
+        // probes) is the most expensive thing here, and the tick
+        // calls both CheckBlockedApps and EnforceBlocking. Cache one
+        // lightweight snapshot per ~2s so a whole tick shares it.
+        // Only IDs/names/paths are cached - live Process objects
+        // are always re-opened by ID and re-verified by path, so a
+        // recycled PID can never cause a wrong kill.
+        // ============================================================
+
+        private readonly object snapshotLock = new();
+
+        private DateTime snapshotTakenUtc = DateTime.MinValue;
+
+        private List<ProcessSnapshot> cachedSnapshot = new();
+
+        private static readonly TimeSpan SnapshotTtl =
+            TimeSpan.FromSeconds(2);
+
+        private sealed class ProcessSnapshot
+        {
+            public int Id;
+
+            public string Name = "";
+
+            public string? Path;
+        }
+
+        private List<ProcessSnapshot> GetProcessSnapshot()
+        {
+            lock (snapshotLock)
+            {
+                if (DateTime.UtcNow - snapshotTakenUtc < SnapshotTtl)
+                {
+                    return cachedSnapshot;
+                }
+
+                List<ProcessSnapshot> fresh = new();
+
+                Process[] processes;
+
+                try
+                {
+                    processes = Process.GetProcesses();
+                }
+                catch
+                {
+                    return cachedSnapshot;
+                }
+
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        if (process.HasExited)
+                        {
+                            continue;
+                        }
+
+                        string name;
+
+                        try
+                        {
+                            name = process.ProcessName;
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            continue;
+                        }
+
+                        string? path = null;
+
+                        try
+                        {
+                            path = process.MainModule?.FileName;
+                        }
+                        catch
+                        {
+                        }
+
+                        fresh.Add(
+                            new ProcessSnapshot
+                            {
+                                Id = process.Id,
+                                Name = name,
+                                Path = path
+                            });
+                    }
+                    catch
+                    {
+                    }
+                    finally
+                    {
+                        try { process.Dispose(); } catch { }
+                    }
+                }
+
+                cachedSnapshot = fresh;
+                snapshotTakenUtc = DateTime.UtcNow;
+
+                return cachedSnapshot;
+            }
+        }
+
+        // ============================================================
+        // GRACEFUL-CLOSE TRACKING
+        //
+        // CloseMainWindow + WaitForExit used to block the UI thread
+        // up to 1s per process per tick (frozen cursor). Now: first
+        // sighting sends the close request and returns immediately;
+        // later ticks Kill only if still alive past the grace period.
+        // StartTime is stored so a recycled PID is never mistaken
+        // for the original process.
+        // ============================================================
+
+        private readonly Dictionary<int, (DateTime StartTime, DateTime RequestedAt)> closeGrace =
+            new();
+
+        private static readonly TimeSpan CloseGracePeriod =
+            TimeSpan.FromMilliseconds(1500);
+
+        // ============================================================
         // MANUAL MONITORING
         // ============================================================
 
@@ -140,9 +268,9 @@ namespace LochlanProductivity.Services
                 if (task.IsCompleted)
                     continue;
 
-                foreach (
-                    BlockedApp app
-                    in pair.Value)
+            foreach (
+                BlockedApp app
+                in pair.Value)
                 {
                     List<Process> processes =
                         GetApplicationProcesses(app);
@@ -154,14 +282,78 @@ namespace LochlanProductivity.Services
                         try
                         {
                             if (process.HasExited)
-                                continue;
-
-                            process.CloseMainWindow();
-
-                            if (!process.WaitForExit(1000))
                             {
-                                process.Kill();
+                                closeGrace.Remove(process.Id);
+                                continue;
                             }
+
+                            DateTime procStart;
+
+                            try
+                            {
+                                procStart = process.StartTime;
+                            }
+                            catch
+                            {
+                                // Can't verify identity: ask nicely
+                                // once per tick, never wait.
+                                try { process.CloseMainWindow(); }
+                                catch { }
+
+                                blockedApps.Add(
+                                    new BlockedAppStatus
+                                    {
+                                        App = app,
+
+                                        Task = task,
+
+                                        IsRunning = true
+                                    });
+
+                                continue;
+                            }
+
+                            if (closeGrace.TryGetValue(
+                                process.Id,
+                                out var grace) &&
+                                grace.StartTime == procStart)
+                            {
+                                // Already asked: kill only if still
+                                // alive past the grace period.
+                                if (DateTime.UtcNow - grace.RequestedAt >=
+                                    CloseGracePeriod)
+                                {
+                                    try
+                                    {
+                                        if (!process.HasExited)
+                                            process.Kill();
+                                    }
+                                    catch { }
+
+                                    closeGrace.Remove(process.Id);
+                                }
+
+                                blockedApps.Add(
+                                    new BlockedAppStatus
+                                    {
+                                        App = app,
+
+                                        Task = task,
+
+                                        IsRunning = true
+                                    });
+
+                                continue;
+                            }
+
+                            try
+                            {
+                                process.CloseMainWindow();
+                            }
+                            catch { }
+
+                            closeGrace[process.Id] =
+                                (procStart, DateTime.UtcNow);
 
                             blockedApps.Add(
                                 new BlockedAppStatus
@@ -184,9 +376,31 @@ namespace LochlanProductivity.Services
                         }
                     }
                 }
+
+            PruneCloseGrace();
             }
 
             return blockedApps;
+        }
+
+        private void PruneCloseGrace()
+        {
+            if (closeGrace.Count < 500)
+                return;
+
+            DateTime cutoff =
+                DateTime.UtcNow.AddMinutes(-5);
+
+            List<int> stale =
+                closeGrace
+                    .Where(pair => pair.Value.RequestedAt < cutoff)
+                    .Select(pair => pair.Key)
+                    .ToList();
+
+            foreach (int id in stale)
+            {
+                closeGrace.Remove(id);
+            }
         }
 
         // ============================================================
@@ -573,31 +787,6 @@ namespace LochlanProductivity.Services
                 Path.IsPathRooted(
                     app.ExecutablePath);
 
-            Process[] processes;
-
-            try
-            {
-                if (!isFullPath)
-                {
-                    string processName =
-                        Path.GetFileNameWithoutExtension(
-                            app.ExecutablePath);
-
-                    processes =
-                        Process.GetProcessesByName(
-                            processName);
-                }
-                else
-                {
-                    processes =
-                        Process.GetProcesses();
-                }
-            }
-            catch
-            {
-                return matchingProcesses;
-            }
-
             string? expectedPath = null;
 
             if (isFullPath)
@@ -610,8 +799,118 @@ namespace LochlanProductivity.Services
                 }
                 catch
                 {
-                    expectedPath = null;
+                    return matchingProcesses;
                 }
+            }
+
+            if (isFullPath && expectedPath != null)
+            {
+                // Full paths share the tick's cached snapshot instead
+                // of enumerating all processes per app. Candidates are
+                // re-opened by ID and re-verified by live path.
+                foreach (ProcessSnapshot entry in GetProcessSnapshot())
+                {
+                    if (string.IsNullOrWhiteSpace(entry.Path))
+                        continue;
+
+                    string normalizedEntry;
+
+                    try
+                    {
+                        normalizedEntry =
+                            Path.GetFullPath(entry.Path);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (!normalizedEntry.Equals(
+                        expectedPath,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    Process? candidate = null;
+
+                    try
+                    {
+                        candidate =
+                            Process.GetProcessById(entry.Id);
+
+                        if (candidate.HasExited)
+                        {
+                            candidate.Dispose();
+                            continue;
+                        }
+
+                        string? actualPath = null;
+
+                        try
+                        {
+                            actualPath =
+                                candidate.MainModule?.FileName;
+                        }
+                        catch
+                        {
+                        }
+
+                        if (string.IsNullOrWhiteSpace(actualPath))
+                        {
+                            candidate.Dispose();
+                            continue;
+                        }
+
+                        string normalizedActual;
+
+                        try
+                        {
+                            normalizedActual =
+                                Path.GetFullPath(actualPath);
+                        }
+                        catch
+                        {
+                            candidate.Dispose();
+                            continue;
+                        }
+
+                        if (normalizedActual.Equals(
+                            expectedPath,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            matchingProcesses.Add(candidate);
+                        }
+                        else
+                        {
+                            candidate.Dispose();
+                        }
+                    }
+                    catch
+                    {
+                        try { candidate?.Dispose(); } catch { }
+                    }
+                }
+
+                return matchingProcesses;
+            }
+
+            // Bare names (steam.exe) resolve cheaply by name.
+            string processName =
+                Path.GetFileNameWithoutExtension(
+                    app.ExecutablePath);
+
+            Process[] processes;
+
+            try
+            {
+                processes =
+                    Process.GetProcessesByName(
+                        processName);
+            }
+            catch
+            {
+                return matchingProcesses;
             }
 
             foreach (
@@ -626,45 +925,8 @@ namespace LochlanProductivity.Services
                         continue;
                     }
 
-                    if (!isFullPath)
-                    {
-                        matchingProcesses.Add(
-                            process);
-
-                        continue;
-                    }
-
-                    string? actualPath = null;
-
-                    try
-                    {
-                        actualPath =
-                            process.MainModule?.FileName;
-                    }
-                    catch
-                    {
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(
-                        actualPath) &&
-                        expectedPath != null)
-                    {
-                        string normalizedActualPath =
-                            Path.GetFullPath(
-                                actualPath);
-
-                        if (normalizedActualPath.Equals(
-                            expectedPath,
-                            StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchingProcesses.Add(
-                                process);
-
-                            continue;
-                        }
-                    }
-
-                    process.Dispose();
+                    matchingProcesses.Add(
+                        process);
                 }
                 catch
                 {

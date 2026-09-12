@@ -131,6 +131,34 @@ namespace LochlanProductivity.Services
         }
 
         // ============================================================
+        // REPLACE ALL (backup import)
+        // ============================================================
+
+        public void ReplaceGroups(
+            IEnumerable<AppGroup> newGroups)
+        {
+            groups.Clear();
+
+            foreach (AppGroup group in newGroups)
+            {
+                if (group == null)
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(group.Id))
+                {
+                    group.Id = Guid.NewGuid().ToString();
+                }
+
+                group.Apps ??= new List<BlockedApp>();
+                group.LastModified = DateTime.UtcNow;
+
+                groups.Add(group);
+            }
+
+            Save();
+        }
+
+        // ============================================================
         // DELETE GROUP
         // ============================================================
 
