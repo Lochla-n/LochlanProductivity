@@ -23,8 +23,42 @@ namespace LochlanProductivity.Services
         public TimeSpan EndTime { get; set; } =
             new TimeSpan(22, 0, 0);
 
+        // Minutes before StartTime to send a warning toast.
+        // 0 = no warning.
+        public int WarnMinutesBefore { get; set; } = 15;
+
         // Used by SyncManager to merge changes between computers.
         public DateTime LastModified { get; set; } = DateTime.UtcNow;
+
+        // ============================================================
+        // NEXT START
+        //
+        // Next upcoming StartTime on a listed day (for warnings).
+        // Searches today + 7 days so long lead times still resolve.
+        // ============================================================
+
+        public DateTime? GetNextStart(DateTime localNow)
+        {
+            if (!IsEnabled || Days == null || Days.Count == 0)
+                return null;
+
+            for (int offset = 0; offset < 8; offset++)
+            {
+                DateTime day =
+                    localNow.Date.AddDays(offset);
+
+                if (!Days.Contains(day.DayOfWeek))
+                    continue;
+
+                DateTime candidate =
+                    day.Add(StartTime);
+
+                if (candidate > localNow)
+                    return candidate;
+            }
+
+            return null;
+        }
 
         // ============================================================
         // CHECK WHETHER SCHEDULE IS ACTIVE

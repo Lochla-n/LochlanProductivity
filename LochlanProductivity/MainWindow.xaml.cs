@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.Windows.AppNotifications;
+using Microsoft.Windows.AppNotifications.Builder;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -546,6 +548,166 @@ namespace LochlanProductivity
             SetupAutoSync();
 
             SetupYouTubeEmergencyExpiry();
+
+            SetupToastNotifications();
+        }
+
+        // ============================================================
+        // TOAST NOTIFICATIONS (schedule warnings)
+        //
+        // Windows toasts reach the user even mid-game, where the
+        // in-app banner is invisible. Best-effort: if registration
+        // fails, warnings fall back to the in-app banner.
+        // ============================================================
+
+        private void SetupToastNotifications()
+        {
+            try
+            {
+                AppNotificationManager notifier =
+                    AppNotificationManager.Default;
+
+                notifier.Register();
+
+                notifier.NotificationInvoked += (s, e) =>
+                    DispatcherQueue.TryEnqueue(
+                        () => ShowMainWindow());
+
+                HostsFileBlocker.Log("toast notifications registered");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Toast registration failed: {ex.Message}");
+
+                HostsFileBlocker.Log(
+                    $"toast registration failed: {ex.Message}");
+            }
+        }
+
+        // Schedule ID -> the start time already warned for. Prevents
+        // re-warning every 2.5s tick through the whole lead window.
+        private readonly Dictionary<string, DateTime> scheduleWarningsSent =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        private void CheckScheduleWarnings()
+        {
+            try
+            {
+                DateTime now = DateTime.Now;
+
+                // Prune warnings for starts that already passed so
+                // the map stays tiny across weeks of uptime.
+                List<string> stale =
+                    scheduleWarningsSent
+                        .Where(pair => pair.Value <= now)
+                        .Select(pair => pair.Key)
+                        .ToList();
+
+                foreach (string key in stale)
+                {
+                    scheduleWarningsSent.Remove(key);
+                }
+
+                foreach (BlockingSchedule schedule in
+                    scheduleManager.Schedules)
+                {
+                    if (!schedule.IsEnabled ||
+                        schedule.WarnMinutesBefore <= 0 ||
+                        schedule.Days == null ||
+                        schedule.Days.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    DateTime? nextStart =
+                        schedule.GetNextStart(now);
+
+                    if (nextStart == null)
+                        continue;
+
+                    double minutesLeft =
+                        (nextStart.Value - now).TotalMinutes;
+
+                    if (minutesLeft < 0 ||
+                        minutesLeft > schedule.WarnMinutesBefore)
+                    {
+                        continue;
+                    }
+
+                    if (scheduleWarningsSent.TryGetValue(
+                        schedule.Id,
+                        out DateTime warnedFor) &&
+                        warnedFor == nextStart.Value)
+                    {
+                        continue;
+                    }
+
+                    scheduleWarningsSent[schedule.Id] =
+                        nextStart.Value;
+
+                    SendScheduleWarningToast(
+                        schedule,
+                        nextStart.Value,
+                        Math.Max(
+                            1,
+                            (int)Math.Ceiling(minutesLeft)));
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Schedule warning check failed: {ex.Message}");
+            }
+        }
+
+        private void SendScheduleWarningToast(
+            BlockingSchedule schedule,
+            DateTime start,
+            int minutesLeft)
+        {
+            string title =
+                $"Focus Mode starts in {minutesLeft} " +
+                $"minute{(minutesLeft == 1 ? "" : "s")}";
+
+            string message =
+                $"{schedule.Name} " +
+                $"({schedule.GetTimeDescription()}) starts at " +
+                $"{start:t}. Wrap up — don't start anything you " +
+                $"can't pause.";
+
+            try
+            {
+                AppNotification notification =
+                    new AppNotificationBuilder()
+                        .AddText(title)
+                        .AddText(message)
+                        .SetScenario(AppNotificationScenario.Reminder)
+                        .BuildNotification();
+
+                // Stale warnings vanish once the block starts.
+                notification.Expiration =
+                    new DateTimeOffset(start);
+
+                AppNotificationManager.Default.Show(notification);
+
+                HostsFileBlocker.Log(
+                    $"warned: {schedule.Name} starts at {start:t}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Toast failed, using in-app banner: {ex.Message}");
+
+                // Toasts unavailable: fall back to the in-app banner
+                // so the warning is still visible on return.
+                BlockedAppNotificationTitle.Text = title;
+
+                BlockedAppNotificationMessage.Text = message;
+
+                BlockedAppNotification.Visibility =
+                    Visibility.Visible;
+            }
         }
 
         private async System.Threading.Tasks.Task
@@ -2013,6 +2175,8 @@ namespace LochlanProductivity
                 UpdateFocusModeLock();
 
                 UpdateScheduledBlockingState();
+
+                CheckScheduleWarnings();
 
                 UpdateWebsiteBlockingState();
 
@@ -5295,6 +5459,22 @@ namespace LochlanProductivity
             content.Children.Add(
                 endPicker);
 
+            NumberBox warnBox =
+                new NumberBox
+                {
+                    Header =
+                        "Warn me minutes before (0 = off)",
+
+                    Minimum = 0,
+
+                    Maximum = 180,
+
+                    Value = 15
+                };
+
+            content.Children.Add(
+                warnBox);
+
             ScrollViewer scrollViewer =
                 new ScrollViewer
                 {
@@ -5372,7 +5552,8 @@ namespace LochlanProductivity
                 name,
                 selectedDays,
                 startPicker.Time,
-                endPicker.Time);
+                endPicker.Time,
+                Math.Max(0, (int)warnBox.Value));
         }
 
         // ============================================================
@@ -5523,6 +5704,22 @@ namespace LochlanProductivity
             content.Children.Add(
                 endPicker);
 
+            NumberBox warnBox =
+                new NumberBox
+                {
+                    Header =
+                        "Warn me minutes before (0 = off)",
+
+                    Minimum = 0,
+
+                    Maximum = 180,
+
+                    Value = schedule.WarnMinutesBefore
+                };
+
+            content.Children.Add(
+                warnBox);
+
             Button deleteButton =
                 new Button
                 {
@@ -5659,6 +5856,13 @@ namespace LochlanProductivity
 
             schedule.EndTime =
                 endPicker.Time;
+
+            schedule.WarnMinutesBefore =
+                Math.Max(0, (int)warnBox.Value);
+
+            // Stamp so the change propagates via sync (edits here
+            // previously never updated LastModified).
+            schedule.LastModified = DateTime.UtcNow;
 
             scheduleManager.Save();
         }

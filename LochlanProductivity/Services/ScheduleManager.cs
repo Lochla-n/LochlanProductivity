@@ -82,7 +82,8 @@ namespace LochlanProductivity.Services
             string name,
             IEnumerable<DayOfWeek> days,
             TimeSpan startTime,
-            TimeSpan endTime)
+            TimeSpan endTime,
+            int warnMinutesBefore = 15)
         {
             BlockingSchedule schedule =
                 new BlockingSchedule
@@ -96,6 +97,9 @@ namespace LochlanProductivity.Services
                             : name.Trim(),
 
                     IsEnabled = true,
+
+                    WarnMinutesBefore =
+                        Math.Max(0, warnMinutesBefore),
 
                     Days =
                         days

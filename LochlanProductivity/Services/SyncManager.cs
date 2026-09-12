@@ -904,7 +904,9 @@ namespace LochlanProductivity.Services
                 {
                     if (incomingSchedule.LastModified == existing.LastModified &&
                         incomingSchedule.Name == existing.Name &&
-                        incomingSchedule.IsEnabled == existing.IsEnabled)
+                        incomingSchedule.IsEnabled == existing.IsEnabled &&
+                        incomingSchedule.WarnMinutesBefore ==
+                            existing.WarnMinutesBefore)
                     {
                         continue;
                     }
@@ -913,6 +915,8 @@ namespace LochlanProductivity.Services
                     existing.IsEnabled = incomingSchedule.IsEnabled;
                     existing.StartTime = incomingSchedule.StartTime;
                     existing.EndTime = incomingSchedule.EndTime;
+                    existing.WarnMinutesBefore =
+                        incomingSchedule.WarnMinutesBefore;
                     existing.Days =
                         new List<DayOfWeek>(
                             incomingSchedule.Days ?? new());
