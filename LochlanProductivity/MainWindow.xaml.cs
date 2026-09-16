@@ -1561,6 +1561,8 @@ namespace LochlanProductivity
 
             ApplyStickyBlockingPolicy(task);
 
+            task.SortOrder = NextSortOrder();
+
             tasks.Add(task);
 
             await SaveTasksAsync();
@@ -2038,6 +2040,8 @@ namespace LochlanProductivity
             // ------------------------------------------------------------
 
             policyManager.ApplyDefaultPolicy(task);
+
+            task.SortOrder = NextSortOrder();
 
             tasks.Add(task);
 
@@ -2968,6 +2972,8 @@ namespace LochlanProductivity
 
             policyManager.ExpandTaskGroups(task);
 
+            task.SortOrder = NextSortOrder();
+
             tasks.Add(task);
 
             RefreshTaskList();
@@ -2998,6 +3004,8 @@ namespace LochlanProductivity
                 };
 
             ApplyStickyBlockingPolicy(task);
+
+            task.SortOrder = NextSortOrder();
 
             tasks.Add(task);
 
@@ -3161,6 +3169,114 @@ namespace LochlanProductivity
             LongTermNoteBox.Foreground = TB(t.InkText);
         }
 
+        private double NextSortOrder()
+        {
+            double max = -1;
+
+            foreach (TodoTask t in ActiveTasks)
+            {
+                if (t.SortOrder > max)
+                    max = t.SortOrder;
+            }
+
+            return max + 1;
+        }
+
+        // True when the drag carries one of our tasks AND it belongs
+        // to the same done/undone group as the drop target (completed
+        // tasks always stay below incomplete ones).
+        private static bool IsTaskDrag(DragEventArgs e, bool targetDone)
+        {
+            try
+            {
+                if (!e.DataView.Properties.TryGetValue(
+                    "taskId",
+                    out object? idObj) ||
+                    idObj is not string id ||
+                    string.IsNullOrWhiteSpace(id))
+                {
+                    return false;
+                }
+
+                if (e.DataView.Properties.TryGetValue(
+                    "taskDone",
+                    out object? doneObj) &&
+                    doneObj is bool draggedDone &&
+                    draggedDone != targetDone)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async void MoveTask(
+            string droppedId,
+            string targetId,
+            bool insertBefore)
+        {
+            TodoTask? dropped = tasks.FirstOrDefault(
+                t => t.Id.Equals(
+                    droppedId,
+                    StringComparison.OrdinalIgnoreCase) &&
+                    !t.IsDeleted);
+
+            TodoTask? target = tasks.FirstOrDefault(
+                t => t.Id.Equals(
+                    targetId,
+                    StringComparison.OrdinalIgnoreCase) &&
+                    !t.IsDeleted);
+
+            if (dropped == null ||
+                target == null ||
+                dropped.IsCompleted != target.IsCompleted)
+            {
+                return;
+            }
+
+            List<TodoTask> group = ActiveTasks
+                .Where(t => !t.IsLongTerm &&
+                    t.DueDate.Date <= DateTime.Today &&
+                    t.IsCompleted == dropped.IsCompleted)
+                .OrderBy(t => t.SortOrder)
+                .ThenByDescending(t => (int)t.Priority)
+                .ThenBy(GetEffectiveDeadline)
+                .ThenBy(
+                    t => t.Title,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            group.RemoveAll(
+                t => t.Id.Equals(
+                    droppedId,
+                    StringComparison.OrdinalIgnoreCase));
+
+            int idx = group.FindIndex(
+                t => t.Id.Equals(
+                    targetId,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (idx < 0)
+                return;
+
+            group.Insert(insertBefore ? idx : idx + 1, dropped);
+
+            for (int i = 0; i < group.Count; i++)
+            {
+                group[i].SortOrder = i;
+                group[i].LastModified = DateTime.UtcNow;
+            }
+
+            RefreshTaskList();
+
+            await SaveTasksAsync();
+        }
+
         private void RefreshTaskList()
         {
             TaskList.Children.Clear();
@@ -3172,6 +3288,7 @@ namespace LochlanProductivity
             List<TodoTask> orderedTasks = ActiveTasks
                 .Where(task => !task.IsLongTerm && task.DueDate.Date <= DateTime.Today)
                 .OrderBy(task => task.IsCompleted)
+                .ThenBy(task => task.SortOrder)
                 .ThenByDescending(task => (int)task.Priority)
                 .ThenBy(GetEffectiveDeadline)
                 .ThenBy(
@@ -3220,6 +3337,82 @@ namespace LochlanProductivity
                         TB(currentTheme.IncompleteCardBorder);
                     card.BorderThickness = new Thickness(1, 1, 1, 1);
                 }
+
+                // Drag-and-drop reorder (Today list only). Dragging
+                // carries the task Id; dropping on another card of
+                // the same group (done/undone) moves it before/after
+                // by drop half. Completed always stay below incomplete.
+                string draggedId = task.Id;
+                bool draggedDone = task.IsCompleted;
+
+                card.CanDrag = true;
+
+                card.DragStarting += (s, e) =>
+                {
+                    e.Data.Properties["taskId"] = draggedId;
+                    e.Data.Properties["taskDone"] = draggedDone;
+                    e.Data.RequestedOperation =
+                        Windows.ApplicationModel.DataTransfer
+                            .DataPackageOperation.Move;
+                };
+
+                card.AllowDrop = true;
+
+                card.DragEnter += (s, e) =>
+                {
+                    if (!IsTaskDrag(e, draggedDone))
+                        return;
+
+                    e.AcceptedOperation =
+                        Windows.ApplicationModel.DataTransfer
+                            .DataPackageOperation.Move;
+                    e.DragUIOverride.IsCaptionVisible = false;
+
+                    card.BorderBrush = TB(currentTheme.AccentBar);
+                    card.BorderThickness = new Thickness(2);
+                };
+
+                card.DragLeave += (s, e) =>
+                {
+                    card.BorderBrush = draggedDone
+                        ? TB(currentTheme.CardBorder)
+                        : TB(currentTheme.IncompleteCardBorder);
+                    card.BorderThickness = new Thickness(1, 1, 1, 1);
+                };
+
+                card.Drop += (s, e) =>
+                {
+                    card.BorderBrush = draggedDone
+                        ? TB(currentTheme.CardBorder)
+                        : TB(currentTheme.IncompleteCardBorder);
+                    card.BorderThickness = new Thickness(1, 1, 1, 1);
+
+                    if (!IsTaskDrag(e, draggedDone))
+                        return;
+
+                    e.AcceptedOperation =
+                        Windows.ApplicationModel.DataTransfer
+                            .DataPackageOperation.Move;
+
+                    if (!e.DataView.Properties.TryGetValue(
+                        "taskId",
+                        out object? droppedObj) ||
+                        droppedObj is not string droppedId ||
+                        droppedId.Equals(
+                            draggedId,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    Windows.Foundation.Point pos =
+                        e.GetPosition(card);
+
+                    bool insertBefore =
+                        pos.Y < card.ActualHeight / 2;
+
+                    MoveTask(droppedId, draggedId, insertBefore);
+                };
 
                 Grid taskRow =
                     new Grid
@@ -8117,7 +8310,8 @@ namespace LochlanProductivity
                                 if (incoming.LastModified == existing.LastModified &&
                                     incoming.Title == existing.Title &&
                                     incoming.IsCompleted == existing.IsCompleted &&
-                                    incoming.IsDeleted == existing.IsDeleted)
+                                    incoming.IsDeleted == existing.IsDeleted &&
+                                    incoming.SortOrder == existing.SortOrder)
                                 {
                                     continue;
                                 }
@@ -8139,6 +8333,7 @@ namespace LochlanProductivity
                                     new List<DayOfWeek>(incoming.RecurrenceDays ?? new());
                                 existing.DueDate = incoming.DueDate;
                                 existing.LastCompletedDate = incoming.LastCompletedDate;
+                                existing.SortOrder = incoming.SortOrder;
 
                                 totalMerged++;
                             }
@@ -9348,6 +9543,10 @@ namespace LochlanProductivity
 
         // Most recent date the task was completed.
         public DateTime? LastCompletedDate { get; set; }
+
+        // Manual order within the Today list (drag-and-drop).
+        // Lower = higher. Ties fall back to priority/deadline/title.
+        public double SortOrder { get; set; } = 0;
 
         // Long-term / note: no due date, never blocks, shown in
         // its own section for goals & reference info.

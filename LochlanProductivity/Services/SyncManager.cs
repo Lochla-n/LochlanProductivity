@@ -755,13 +755,20 @@ namespace LochlanProductivity.Services
                         needsUpdate = true;
                     }
 
-                    // Title/priority etc should still converge to incoming
-                    // when equal but different — newest writer wins.
+                    // Title/priority/order etc should still converge
+                    // to incoming when equal but different — newest
+                    // writer wins.
                     if (incomingTask.Title != existing.Title ||
                         incomingTask.Priority != existing.Priority)
                     {
                         existing.Title = incomingTask.Title;
                         existing.Priority = incomingTask.Priority;
+                        needsUpdate = true;
+                    }
+
+                    if (incomingTask.SortOrder != existing.SortOrder)
+                    {
+                        existing.SortOrder = incomingTask.SortOrder;
                         needsUpdate = true;
                     }
 
@@ -802,6 +809,7 @@ namespace LochlanProductivity.Services
             target.DueDate = source.DueDate;
             target.LastCompletedDate = source.LastCompletedDate;
             target.IsLongTerm = source.IsLongTerm;
+            target.SortOrder = source.SortOrder;
         }
 
         private int MergeGroups(
