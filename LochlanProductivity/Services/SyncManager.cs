@@ -468,6 +468,45 @@ namespace LochlanProductivity.Services
         // FULL TWO-WAY MERGE
         // ============================================================
 
+        // Persistent sync diagnostics (%LocalAppData%/
+        // LochlanProductivity/sync.log). Release builds have no
+        // debugger, so merges and failures must be visible on disk.
+        public static void Log(string message)
+        {
+            try
+            {
+                string directory =
+                    Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.LocalApplicationData),
+                        "LochlanProductivity");
+
+                Directory.CreateDirectory(directory);
+
+                string path =
+                    Path.Combine(directory, "sync.log");
+
+                try
+                {
+                    if (File.Exists(path) &&
+                        new FileInfo(path).Length > 262144)
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch
+                {
+                }
+
+                File.AppendAllText(
+                    path,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            }
+            catch
+            {
+            }
+        }
+
         public async Task<SyncResult> SyncNowAsync(
             List<LochlanProductivity.TodoTask> tasks,
             AppGroupManager groupManager,
@@ -479,6 +518,10 @@ namespace LochlanProductivity.Services
         {
             try
             {
+                Log(
+                    $"sync start: local={tasks.Count} " +
+                    $"folder={SyncFolder}");
+
                 SyncData? sharedData =
                     await LoadSyncDataAsync();
 
@@ -615,6 +658,14 @@ namespace LochlanProductivity.Services
                 bool saved =
                     await SaveSyncDataAsync(merged);
 
+                Log(
+                    $"sync merged: tasks={taskChanges} " +
+                    $"groups={groupChanges} " +
+                    $"schedules={scheduleChanges} " +
+                    $"sites={siteChanges} " +
+                    $"prompt={dailyPromptChanged} " +
+                    $"note={noteChanged} saved={saved}");
+
                 return new SyncResult
                 {
                     Success = saved,
@@ -646,6 +697,8 @@ namespace LochlanProductivity.Services
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"Sync failed: {ex}");
+
+                Log($"sync FAILED: {ex.Message}");
 
                 return new SyncResult
                 {

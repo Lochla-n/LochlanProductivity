@@ -1008,6 +1008,7 @@ namespace LochlanProductivity
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"auto-push failed: {ex}");
+                SyncManager.Log($"auto-push FAILED: {ex.Message}");
                 SetSyncStatus("Sync error", false);
             }
             finally
@@ -1076,6 +1077,7 @@ namespace LochlanProductivity
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"auto-pull failed: {ex}");
+                SyncManager.Log($"auto-pull FAILED: {ex.Message}");
                 SetSyncStatus("Sync error", false);
             }
             finally
@@ -8059,6 +8061,9 @@ namespace LochlanProductivity
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"Failed to save tasks: {ex}");
+
+                SyncManager.Log(
+                    $"SAVE tasks FAILED: {ex.Message}");
             }
         }
 
@@ -8535,6 +8540,11 @@ namespace LochlanProductivity
                 // toggled it off once. Always overwritten (not just
                 // when missing): a stale Debug path otherwise survives
                 // forever while the Release build is what runs.
+                //
+                // IMPORTANT: when running with package identity, the
+                // Run key must launch via shell:AppsFolder — launching
+                // the loose exe directly crashes in the App SDK
+                // bootstrap (REGDB_E_CLASSNOTREG) with no window.
                 try
                 {
                     using Microsoft.Win32.RegistryKey? key =
@@ -8544,12 +8554,36 @@ namespace LochlanProductivity
 
                     if (key != null)
                     {
-                        string? exe = Environment.ProcessPath;
+                        string? wanted = null;
 
-                        if (!string.IsNullOrWhiteSpace(exe))
+                        try
                         {
-                            string wanted = $"\"{exe}\"";
+                            var package =
+                                Windows.ApplicationModel.Package.Current;
 
+                            if (package != null)
+                            {
+                                wanted =
+                                    "explorer.exe shell:AppsFolder\\" +
+                                    package.Id.FamilyName + "!App";
+                            }
+                        }
+                        catch
+                        {
+                        }
+
+                        if (wanted == null)
+                        {
+                            string? exe = Environment.ProcessPath;
+
+                            if (!string.IsNullOrWhiteSpace(exe))
+                            {
+                                wanted = $"\"{exe}\"";
+                            }
+                        }
+
+                        if (wanted != null)
+                        {
                             string? current =
                                 key.GetValue(
                                     "LochlanProductivity") as string;
