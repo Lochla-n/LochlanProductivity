@@ -1915,6 +1915,75 @@ namespace LochlanProductivity
                 dueDatePicker);
 
             // ------------------------------------------------------------
+            // BLOCKING GROUPS (unchecked = pure reminder, blocks nothing)
+            // ------------------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Blocks",
+
+                    FontWeight =
+                        Microsoft.UI.Text.FontWeights.SemiBold,
+
+                    Margin =
+                        new Thickness(
+                            0,
+                            8,
+                            0,
+                            0)
+                });
+
+            Dictionary<string, CheckBox> blockGroupBoxes =
+                new(StringComparer.OrdinalIgnoreCase);
+
+            // Default to the sticky quick-add selection so it matches
+            // what Add would do; fall back to Games on first run.
+            HashSet<string> defaultGroups =
+                new(stickyBlockedGroupIds, StringComparer.OrdinalIgnoreCase);
+
+            defaultGroups.RemoveWhere(
+                id => groupManager.GetGroup(id) == null);
+
+            if (defaultGroups.Count == 0 &&
+                groupManager.GetGroup("games") != null)
+            {
+                defaultGroups.Add("games");
+            }
+
+            foreach (AppGroup appGroup in groupManager.Groups)
+            {
+                CheckBox groupBox =
+                    new CheckBox
+                    {
+                        Content =
+                            $"{appGroup.Name} " +
+                            $"({appGroup.Apps.Count} app" +
+                            $"{(appGroup.Apps.Count == 1 ? "" : "s")})",
+
+                        IsChecked =
+                            defaultGroups.Contains(appGroup.Id)
+                    };
+
+                blockGroupBoxes.Add(appGroup.Id, groupBox);
+
+                content.Children.Add(groupBox);
+            }
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Uncheck everything for a pure reminder " +
+                           "(e.g. vitamins) that blocks no apps.",
+
+                    FontSize = 12,
+
+                    Opacity = 0.65,
+
+                    TextWrapping = TextWrapping.Wrap
+                });
+
+            // ------------------------------------------------------------
             // CHANGE OPTIONS WHEN RECURRENCE CHANGES
             // ------------------------------------------------------------
 
@@ -2053,10 +2122,22 @@ namespace LochlanProductivity
             }
 
             // ------------------------------------------------------------
-            // DEFAULT BLOCKING POLICY
+            // BLOCKING GROUPS (may be empty = reminder, blocks nothing)
             // ------------------------------------------------------------
 
-            policyManager.ApplyDefaultPolicy(task);
+            foreach (var pair in blockGroupBoxes)
+            {
+                if (pair.Value.IsChecked == true &&
+                    groupManager.GetGroup(pair.Key) != null &&
+                    !task.BlockedGroups.Contains(
+                        pair.Key,
+                        StringComparer.OrdinalIgnoreCase))
+                {
+                    task.BlockedGroups.Add(pair.Key);
+                }
+            }
+
+            policyManager.ExpandTaskGroups(task);
 
             task.SortOrder = NextSortOrder();
 
