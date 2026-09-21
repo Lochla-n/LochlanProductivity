@@ -54,6 +54,11 @@ namespace LochlanProductivity.Services
         // for presets; custom colors live below).
         public string ThemeName { get; set; } = "Frost";
 
+        // When true, completed one-shot tasks whose completion day
+        // is over are soft-deleted automatically (startup + midnight
+        // rollover). Recurring tasks and long-term notes are exempt.
+        public bool AutoDeleteYesterdayCompleted { get; set; } = false;
+
         // First-run consent to the blocking methods (hosts file,
         // scheduled task, registry, process closing). Asked once.
         public bool ConsentAccepted { get; set; } = false;
@@ -126,7 +131,10 @@ namespace LochlanProductivity.Services
                                 CustomThemeIsDark,
 
                             ConsentAccepted =
-                                ConsentAccepted
+                                ConsentAccepted,
+
+                            AutoDeleteYesterdayCompleted =
+                                AutoDeleteYesterdayCompleted
                         },
                         new JsonSerializerOptions
                         {
@@ -211,6 +219,9 @@ namespace LochlanProductivity.Services
                 ConsentAccepted =
                     loaded.ConsentAccepted;
 
+                AutoDeleteYesterdayCompleted =
+                    loaded.AutoDeleteYesterdayCompleted;
+
                 // New field defaults to true for embeds; old files
                 // missing the property deserve the same default.
                 // System.Text.Json leaves bool as false when missing,
@@ -260,6 +271,8 @@ namespace LochlanProductivity.Services
             public bool CustomThemeIsDark { get; set; }
 
             public bool ConsentAccepted { get; set; }
+
+            public bool AutoDeleteYesterdayCompleted { get; set; }
         }
     }
 }

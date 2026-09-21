@@ -528,6 +528,21 @@ namespace LochlanProductivity
             // Load saved tasks.
             await LoadTasksAsync();
 
+            // Drop yesterday's completed one-shots (optional setting).
+            if (appSettings.AutoDeleteYesterdayCompleted)
+            {
+                if (DeleteYesterdayCompletedTasks() > 0)
+                {
+                    await SaveTasksAsync();
+                    QueueAutoSync();
+                }
+                else
+                {
+                    // Backfill alone still needs persisting.
+                    await SaveTasksAsync();
+                }
+            }
+
             // Load the sticky-note text (used when Long-term list is
             // swapped for the writing area in Settings).
             LoadLongTermNote();
@@ -2137,9 +2152,11 @@ namespace LochlanProductivity
 
         private DateTime lastBlockingTickUtc = DateTime.UtcNow;
 
+        private DateTime lastTickDate = DateTime.Today;
+
         private bool dailyPromptActive;
 
-        private void BlockingTimer_Tick(
+        private async void BlockingTimer_Tick(
             object? sender,
             object e)
         {
@@ -2162,6 +2179,22 @@ namespace LochlanProductivity
                     // Guarded inside: no-ops if already prompting or
                     // if today's plan is done.
                     _ = CheckDailyPromptAsync();
+                }
+
+                // Midnight rollover while running: drop yesterday's
+                // completed one-shots (optional setting).
+                if (DateTime.Today != lastTickDate)
+                {
+                    lastTickDate = DateTime.Today;
+
+                    if (appSettings.AutoDeleteYesterdayCompleted &&
+                        DeleteYesterdayCompletedTasks() > 0)
+                    {
+                        await SaveTasksAsync();
+                        QueueAutoSync();
+                        RefreshTaskList();
+                        UpdateFocusModeLock();
+                    }
                 }
 
                 // Heartbeat every 10s so a dead or stuck tick is
@@ -3279,6 +3312,52 @@ namespace LochlanProductivity
             await SaveTasksAsync();
         }
 
+        // Deletes completed one-shot tasks whose completion day is
+        // over (soft-delete tombstones, so sync propagates). Unknown
+        // completion dates are backfilled to today (kept one more
+        // day, never deleted on first sight). Recurring tasks and
+        // long-term notes are exempt. Returns deleted count.
+        private int DeleteYesterdayCompletedTasks()
+        {
+            DateTime today = DateTime.Today;
+            int deleted = 0;
+            bool backfilled = false;
+
+            foreach (TodoTask task in tasks)
+            {
+                if (task.IsDeleted ||
+                    task.IsRecurring ||
+                    task.IsLongTerm ||
+                    !task.IsCompleted)
+                {
+                    continue;
+                }
+
+                if (task.LastCompletedDate == null)
+                {
+                    task.LastCompletedDate = today;
+                    task.LastModified = DateTime.UtcNow;
+                    backfilled = true;
+                    continue;
+                }
+
+                if (task.LastCompletedDate.Value.Date < today)
+                {
+                    task.IsDeleted = true;
+                    task.LastModified = DateTime.UtcNow;
+                    deleted++;
+                }
+            }
+
+            if (deleted > 0 || backfilled)
+            {
+                SyncManager.Log(
+                    $"auto-delete: removed {deleted} yesterday-completed task(s)");
+            }
+
+            return deleted;
+        }
+
         private void RefreshTaskList()
         {
             TaskList.Children.Clear();
@@ -3536,6 +3615,8 @@ namespace LochlanProductivity
                     {
                         task.IsCompleted = true;
 
+                        task.LastCompletedDate = DateTime.Today;
+
                         task.LastModified = DateTime.UtcNow;
 
                         lastBlockedNotification = null;
@@ -3564,6 +3645,8 @@ namespace LochlanProductivity
                     async (sender, e) =>
                     {
                         task.IsCompleted = false;
+
+                        task.LastCompletedDate = null;
 
                         task.LastModified = DateTime.UtcNow;
 
@@ -9127,6 +9210,72 @@ namespace LochlanProductivity
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = TB(currentTheme.MutedText)
                 });
+
+            // ----------------------------------------------------
+            // TASKS
+            // ----------------------------------------------------
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Tasks",
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily =
+                        new Microsoft.UI.Xaml.Media.FontFamily("Cambria"),
+                    Foreground = TB(currentTheme.InkText)
+                });
+
+            ToggleSwitch autoDeleteToggle =
+                new ToggleSwitch
+                {
+                    Header = "Auto-delete yesterday's completed tasks",
+                    IsOn = appSettings.AutoDeleteYesterdayCompleted
+                };
+
+            content.Children.Add(autoDeleteToggle);
+
+            content.Children.Add(
+                new TextBlock
+                {
+                    Text = "Completed one-shot tasks vanish the next " +
+                           "day. Recurring tasks and long-term notes " +
+                           "are never touched.",
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = TB(currentTheme.MutedText)
+                });
+
+            bool updatingAutoDelete = false;
+
+            autoDeleteToggle.Toggled += async (s, e) =>
+            {
+                if (updatingAutoDelete)
+                    return;
+
+                updatingAutoDelete = true;
+
+                try
+                {
+                    appSettings.AutoDeleteYesterdayCompleted =
+                        autoDeleteToggle.IsOn;
+                    appSettings.Save();
+
+                    if (autoDeleteToggle.IsOn &&
+                        DeleteYesterdayCompletedTasks() > 0)
+                    {
+                        await SaveTasksAsync();
+                        QueueAutoSync();
+                        RefreshTaskList();
+                        UpdateFocusModeLock();
+                    }
+                }
+                finally
+                {
+                    updatingAutoDelete = false;
+                }
+            };
 
             // ----------------------------------------------------
             // FUTURE SETTINGS GO HERE (new sections above this line)
