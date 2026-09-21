@@ -48,11 +48,12 @@ namespace LochlanProductivity.Services
                 return;
             }
 
+            // Mark done but keep the current DueDate so the task stays
+            // visible (checked) in Today for the rest of the day. The
+            // next occurrence is computed lazily by
+            // UpdateRecurringTasksIfDue once this date has passed.
             task.LastCompletedDate =
                 DateTime.Today;
-
-            task.DueDate =
-                CalculateNextDueDate(task);
 
             task.IsCompleted = true;
 
@@ -69,27 +70,44 @@ namespace LochlanProductivity.Services
             UpdateRecurringTasksIfDue(tasks);
         }
 
-        // Returns true when at least one task flipped back to
-        // active (its due date arrived).
+        // Returns true when at least one task advanced to its next
+        // occurrence. A completed task only advances once its due
+        // date has fully passed AND it was completed on an earlier
+        // day — so checking something off keeps it visible (marked)
+        // for the rest of today, then it resurfaces unmarked on its
+        // next due date.
         public bool UpdateRecurringTasksIfDue(
             IEnumerable<TodoTask> tasks)
         {
             bool changed = false;
+
+            DateTime today = DateTime.Today;
 
             foreach (TodoTask task in tasks)
             {
                 if (!task.IsRecurring)
                     continue;
 
-                if (task.IsCompleted &&
-                    task.DueDate.Date <= DateTime.Today)
+                if (!task.IsCompleted)
+                    continue;
+
+                if (task.DueDate.Date >= today)
+                    continue;
+
+                if (task.LastCompletedDate != null &&
+                    task.LastCompletedDate.Value.Date >= today)
                 {
-                    task.IsCompleted = false;
-
-                    task.LastModified = DateTime.UtcNow;
-
-                    changed = true;
+                    continue;
                 }
+
+                task.DueDate =
+                    CalculateNextDueDate(task);
+
+                task.IsCompleted = false;
+
+                task.LastModified = DateTime.UtcNow;
+
+                changed = true;
             }
 
             return changed;
