@@ -291,7 +291,8 @@ namespace LochlanProductivity.Services
             IEnumerable<string> blockedSites,
             DateTime? lastDailyPromptDate = null,
             string? longTermNote = null,
-            DateTime? longTermNoteModified = null)
+            DateTime? longTermNoteModified = null,
+            IEnumerable<PlanPage>? planPages = null)
         {
             return new SyncData
             {
@@ -322,7 +323,11 @@ namespace LochlanProductivity.Services
                     longTermNote ?? "",
 
                 LongTermNoteModified =
-                    longTermNoteModified
+                    longTermNoteModified,
+
+                PlanPages =
+                    new List<PlanPage>(
+                        planPages ?? new List<PlanPage>())
             };
         }
 
@@ -414,6 +419,9 @@ namespace LochlanProductivity.Services
 
                 data.LongTermNote ??= "";
 
+                data.PlanPages ??=
+                    new List<PlanPage>();
+
                 return data;
             }
             catch (Exception ex)
@@ -449,7 +457,8 @@ namespace LochlanProductivity.Services
             BlockedSitesManager blockedSites,
             DateTime? lastDailyPromptDate = null,
             string? longTermNote = null,
-            DateTime? longTermNoteModified = null)
+            DateTime? longTermNoteModified = null,
+            IEnumerable<PlanPage>? planPages = null)
         {
             SyncData data =
                 CreateSyncData(
@@ -459,7 +468,8 @@ namespace LochlanProductivity.Services
                     blockedSites.Domains,
                     lastDailyPromptDate,
                     longTermNote,
-                    longTermNoteModified);
+                    longTermNoteModified,
+                    planPages);
 
             return await SaveSyncDataAsync(data);
         }
@@ -514,7 +524,8 @@ namespace LochlanProductivity.Services
             BlockedSitesManager blockedSites,
             DateTime? localDailyPromptDate = null,
             string? localLongTermNote = null,
-            DateTime? localLongTermNoteModified = null)
+            DateTime? localLongTermNoteModified = null,
+            PlanPageManager? planPageManager = null)
         {
             try
             {
@@ -539,7 +550,8 @@ namespace LochlanProductivity.Services
                             blockedSites,
                             localDailyPromptDate,
                             localLongTermNote,
-                            localLongTermNoteModified);
+                            localLongTermNoteModified,
+                            planPageManager?.Pages);
 
                     return new SyncResult
                     {
@@ -575,6 +587,16 @@ namespace LochlanProductivity.Services
                     MergeBlockedSites(
                         sharedData.BlockedSites,
                         blockedSites);
+
+                int pageChanges = 0;
+
+                if (planPageManager != null)
+                {
+                    pageChanges =
+                        MergePlanPages(
+                            sharedData.PlanPages,
+                            planPageManager);
+                }
 
                 // Daily prompt: newest date wins. If the other
                 // computer already did today's plan, this computer
@@ -653,7 +675,8 @@ namespace LochlanProductivity.Services
                         blockedSites.Domains,
                         mergedPromptDate,
                         mergedNoteText,
-                        mergedNoteModified);
+                        mergedNoteModified,
+                        planPageManager?.Pages);
 
                 bool saved =
                     await SaveSyncDataAsync(merged);
@@ -663,6 +686,7 @@ namespace LochlanProductivity.Services
                     $"groups={groupChanges} " +
                     $"schedules={scheduleChanges} " +
                     $"sites={siteChanges} " +
+                    $"pages={pageChanges} " +
                     $"prompt={dailyPromptChanged} " +
                     $"note={noteChanged} saved={saved}");
 
@@ -677,6 +701,8 @@ namespace LochlanProductivity.Services
                     ScheduleChanges = scheduleChanges,
 
                     SiteChanges = siteChanges,
+
+                    PageChanges = pageChanges,
 
                     DailyPromptChanged = dailyPromptChanged,
 
@@ -1002,6 +1028,100 @@ namespace LochlanProductivity.Services
             return blockedSites.Absorb(incoming);
         }
 
+        // Whole-page newest-wins (ordered step lists merge badly
+        // per-step, and pages are small). Tombstones stick.
+        private int MergePlanPages(
+            List<PlanPage> incoming,
+            PlanPageManager planPageManager)
+        {
+            int changes = 0;
+
+            foreach (PlanPage incomingPage in incoming)
+            {
+                if (incomingPage == null ||
+                    string.IsNullOrWhiteSpace(incomingPage.Id))
+                {
+                    continue;
+                }
+
+                PlanPage? existing =
+                    planPageManager.GetPage(incomingPage.Id);
+
+                if (existing == null)
+                {
+                    incomingPage.Steps ??= new List<PlanStep>();
+                    incomingPage.Title ??= "";
+
+                    planPageManager.Pages.Add(incomingPage);
+
+                    changes++;
+
+                    continue;
+                }
+
+                if (incomingPage.LastModified >=
+                    existing.LastModified)
+                {
+                    if (incomingPage.LastModified ==
+                            existing.LastModified &&
+                        incomingPage.Title == existing.Title &&
+                        incomingPage.IsDeleted == existing.IsDeleted &&
+                        PlanStepsEqual(
+                            incomingPage.Steps,
+                            existing.Steps))
+                    {
+                        continue;
+                    }
+
+                    existing.Title = incomingPage.Title ?? "";
+                    existing.IsDeleted = incomingPage.IsDeleted;
+                    existing.Steps = (incomingPage.Steps ?? new())
+                        .Where(step => step != null)
+                        .Select(
+                            step => new PlanStep
+                            {
+                                Id = string.IsNullOrWhiteSpace(step.Id)
+                                    ? Guid.NewGuid().ToString()
+                                    : step.Id,
+                                Title = step.Title ?? "",
+                                IsCompleted = step.IsCompleted
+                            })
+                        .ToList();
+                    existing.LastModified =
+                        incomingPage.LastModified;
+
+                    changes++;
+                }
+            }
+
+            planPageManager.Save();
+
+            return changes;
+        }
+
+        private static bool PlanStepsEqual(
+            List<PlanStep>? first,
+            List<PlanStep>? second)
+        {
+            first ??= new List<PlanStep>();
+            second ??= new List<PlanStep>();
+
+            if (first.Count != second.Count)
+                return false;
+
+            for (int i = 0; i < first.Count; i++)
+            {
+                if (first[i].Id != second[i].Id ||
+                    first[i].Title != second[i].Title ||
+                    first[i].IsCompleted != second[i].IsCompleted)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // ============================================================
         // CONFIG PERSISTENCE (atomic, DailyPrompt pattern)
         // ============================================================
@@ -1085,6 +1205,8 @@ namespace LochlanProductivity.Services
         public int ScheduleChanges { get; set; }
 
         public int SiteChanges { get; set; }
+
+        public int PageChanges { get; set; }
 
         public bool DailyPromptChanged { get; set; }
 

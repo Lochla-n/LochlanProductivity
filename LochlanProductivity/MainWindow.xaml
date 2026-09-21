@@ -36,6 +36,8 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Button x:Name="FutureButton" Content="+ Future" FontSize="13" Padding="14,6" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" VerticalAlignment="Center" Click="PlanFutureTask_Click" ToolTipService.ToolTip="Plan a one-time task for a future day"/>
                 <Button x:Name="CalendarButton" Content="Calendar" FontSize="13" Padding="14,6" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="CalendarViewButton_Click" ToolTipService.ToolTip="See upcoming and recurring tasks by day"/>
+                <Button x:Name="PlanningButton" Content="Planning" FontSize="13" Padding="14,6" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="PlanningButton_Click" ToolTipService.ToolTip="Break big goals into ordered steps"/>
+                <Button x:Name="ScheduledTasksButton" Content="Scheduled" FontSize="13" Padding="14,6" Background="#CCFAFBF9" BorderBrush="#FFDDE3E0" BorderThickness="1" Foreground="#FF3A2E28" CornerRadius="8" VerticalAlignment="Center" Click="ScheduledTasks_Click" ToolTipService.ToolTip="Recurring tasks"/>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <Ellipse x:Name="SyncStatusDot" Width="8" Height="8" Fill="#FF8A9A8B" VerticalAlignment="Center"/>
                     <TextBlock x:Name="SyncStatusText" Text="Synced" FontSize="11" FontFamily="Segoe UI Variable Small" Foreground="#FF6B5E52" VerticalAlignment="Center"/>
@@ -45,7 +47,6 @@
                         <MenuFlyout>
                             <MenuFlyoutItem Text="App Groups" Click="ManageAppGroups_Click"/>
                             <MenuFlyoutItem Text="Scheduled Blocking" Click="ManageSchedules_Click"/>
-                            <MenuFlyoutItem Text="Scheduled Tasks" Click="ScheduledTasks_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Blocked Websites" Click="BlockedSitesButton_Click"/>
                             <MenuFlyoutItem Text="Sync Folder" Click="SyncFolderButton_Click"/>
@@ -105,7 +106,7 @@
         </Border>
 
         <!-- CONTENT — Today on left, Future + Long-term always visible on right -->
-        <Grid Grid.Row="4">
+        <Grid x:Name="MainContentGrid" Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1.55*"/>
                 <ColumnDefinition Width="1*"/>
@@ -153,6 +154,63 @@
                     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel x:Name="FutureTaskList" Spacing="10"/>
                     </ScrollViewer>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- PLANNING — pages of ordered, dateless, non-blocking steps -->
+        <Grid x:Name="PlanningView" Grid.Row="4" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="0.85*"/>
+                <ColumnDefinition Width="1.6*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Pages -->
+            <Grid Grid.Column="0" Margin="0,0,8,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="PagesHeader" Grid.Row="0" Text="Pages" FontSize="14" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" Opacity="0.85" Margin="0,0,0,8"/>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="PagesList" Spacing="6"/>
+                </ScrollViewer>
+                <Grid Grid.Row="2" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="PageInput" Grid.Column="0" PlaceholderText="New page name…" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="PageInput_KeyDown"/>
+                    <Button x:Name="AddPageButton" Grid.Column="1" Content="Add" Margin="10,0,0,0" Click="AddPage_Click" Background="#FFE8ECE8" Foreground="#FF3A2E28" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
+                </Grid>
+            </Grid>
+
+            <!-- Steps of the selected page -->
+            <Grid Grid.Column="1" Margin="8,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="PageTitle" Grid.Column="0" Text="Select a page" FontSize="16" FontWeight="SemiBold" FontFamily="Cambria" Foreground="#FF3A2E28" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    <Button x:Name="DeletePageButton" Grid.Column="1" Content="Delete Page" Margin="10,0,0,0" Click="DeletePage_Click" Background="#FFFFF8F0" Foreground="#FFA65D3C" BorderBrush="#FFE8CFCF" BorderThickness="1" CornerRadius="8" FontSize="11" Padding="10,4" VerticalAlignment="Center"/>
+                </Grid>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="StepsList" Spacing="8"/>
+                </ScrollViewer>
+                <Grid Grid.Row="2" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="StepInput" Grid.Column="0" PlaceholderText="Add a step…" Background="White" BorderBrush="#FFE8ECE8" CornerRadius="8" KeyDown="StepInput_KeyDown"/>
+                    <Button x:Name="AddStepButton" Grid.Column="1" Content="Add Step" Margin="10,0,0,0" Click="AddStep_Click" Background="#FF8A9A8B" Foreground="White" BorderThickness="0" CornerRadius="8" Padding="14,6"/>
                 </Grid>
             </Grid>
         </Grid>

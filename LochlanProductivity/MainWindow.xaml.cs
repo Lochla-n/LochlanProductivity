@@ -34,6 +34,8 @@ namespace LochlanProductivity
 
         private readonly ScheduleManager scheduleManager = new();
 
+        private readonly PlanPageManager planPageManager = new();
+
         private readonly PolicyManager policyManager;
 
         private readonly DailyPromptManager dailyPromptManager = new();
@@ -971,7 +973,8 @@ namespace LochlanProductivity
                         blockedSiteStore,
                         dailyPromptManager.LastPromptDate,
                         longTermNoteText,
-                        longTermNoteModified);
+                        longTermNoteModified,
+                        planPageManager);
 
                 ApplySyncResultSideData(result);
 
@@ -981,7 +984,8 @@ namespace LochlanProductivity
                     result.ScheduleChanges > 0 ||
                     result.SiteChanges > 0 ||
                     result.DailyPromptChanged ||
-                    result.NoteChanged;
+                    result.NoteChanged ||
+                    result.PageChanges > 0;
 
                 if (result.Success && hadChanges)
                 {
@@ -993,6 +997,7 @@ namespace LochlanProductivity
                         // without re-queuing a push.
                         await SaveTasksAsync();
                         RefreshTaskList();
+                        RefreshPlanningView();
                         UpdateFocusModeLock();
                         UpdateScheduledBlockingState();
 
@@ -1053,7 +1058,8 @@ namespace LochlanProductivity
                         blockedSiteStore,
                         dailyPromptManager.LastPromptDate,
                         longTermNoteText,
-                        longTermNoteModified);
+                        longTermNoteModified,
+                        planPageManager);
 
                 ApplySyncResultSideData(result);
 
@@ -1063,7 +1069,8 @@ namespace LochlanProductivity
                     result.ScheduleChanges > 0 ||
                     result.SiteChanges > 0 ||
                     result.DailyPromptChanged ||
-                    result.NoteChanged;
+                    result.NoteChanged ||
+                    result.PageChanges > 0;
 
                 if (result.Success && hadChanges)
                 {
@@ -1073,6 +1080,7 @@ namespace LochlanProductivity
                     {
                         await SaveTasksAsync();
                         RefreshTaskList();
+                        RefreshPlanningView();
                         UpdateFocusModeLock();
                         UpdateScheduledBlockingState();
 
@@ -1231,7 +1239,8 @@ namespace LochlanProductivity
                         blockedSiteStore,
                         dailyPromptManager.LastPromptDate,
                         longTermNoteText,
-                        longTermNoteModified);
+                        longTermNoteModified,
+                        planPageManager);
 
                 ApplySyncResultSideData(result);
 
@@ -1241,7 +1250,8 @@ namespace LochlanProductivity
                       result.ScheduleChanges > 0 ||
                       result.SiteChanges > 0 ||
                       result.DailyPromptChanged ||
-                      result.NoteChanged))
+                      result.NoteChanged ||
+                      result.PageChanges > 0))
                 {
                     RefreshTaskList();
 
@@ -3203,6 +3213,461 @@ namespace LochlanProductivity
         // ============================================================
 
         // ============================================================
+        // PLANNING VIEW (pages of ordered, dateless steps)
+        //
+        // Steps never block anything and never feed focus state -
+        // pure breakdown lists for bigger goals. Order IS list
+        // order; whole pages sync newest-wins with tombstones.
+        // ============================================================
+
+        private bool planningViewVisible;
+
+        private string? selectedPlanPageId;
+
+        private void PlanningButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            planningViewVisible = !planningViewVisible;
+
+            MainContentGrid.Visibility =
+                planningViewVisible
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+
+            PlanningView.Visibility =
+                planningViewVisible
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+
+            TaskInputBorder.Visibility =
+                planningViewVisible
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+
+            TitleText.Text =
+                planningViewVisible ? "Planning" : "Today's Tasks";
+
+            PlanningButton.Content =
+                planningViewVisible ? "← Tasks" : "Planning";
+
+            if (planningViewVisible)
+                RefreshPlanningView();
+        }
+
+        private PlanPage? SelectedPlanPage()
+        {
+            PlanPage? page = selectedPlanPageId == null
+                ? null
+                : planPageManager.GetPage(selectedPlanPageId);
+
+            if (page == null || page.IsDeleted)
+            {
+                page = planPageManager.ActivePages.FirstOrDefault();
+
+                selectedPlanPageId = page?.Id;
+            }
+
+            return page;
+        }
+
+        private void SavePlanPages()
+        {
+            planPageManager.Save();
+            QueueAutoSync();
+        }
+
+        private void RefreshPlanningView()
+        {
+            try
+            {
+                if (PagesList == null || StepsList == null)
+                    return;
+
+                PagesList.Children.Clear();
+                StepsList.Children.Clear();
+
+                List<PlanPage> pages = planPageManager.ActivePages
+                    .OrderByDescending(
+                        p => p.Steps.Count(s => !s.IsCompleted) > 0)
+                    .ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                PlanPage? selected = SelectedPlanPage();
+
+                foreach (PlanPage page in pages)
+                {
+                    int done = page.Steps.Count(s => s.IsCompleted);
+
+                    Button pageButton =
+                        new Button
+                        {
+                            Content =
+                                $"{page.Title} " +
+                                $"({done}/{page.Steps.Count})",
+                            HorizontalAlignment =
+                                HorizontalAlignment.Stretch,
+                            HorizontalContentAlignment =
+                                HorizontalAlignment.Left,
+                            Background = page.Id == selected?.Id
+                                ? TB(currentTheme.SecondaryButton)
+                                : TB(Microsoft.UI.ColorHelper.FromArgb(
+                                    0, 0, 0, 0)),
+                            Foreground = page.Id == selected?.Id
+                                ? TB(currentTheme.SecondaryButtonText)
+                                : TB(currentTheme.InkText),
+                            BorderThickness = new Thickness(0),
+                            CornerRadius = new CornerRadius(8),
+                            Padding = new Thickness(10, 6, 10, 6)
+                        };
+
+                    string pageId = page.Id;
+
+                    pageButton.Click += (s, e) =>
+                    {
+                        selectedPlanPageId = pageId;
+                        RefreshPlanningView();
+                    };
+
+                    PagesList.Children.Add(pageButton);
+                }
+
+                if (pages.Count == 0)
+                {
+                    PagesList.Children.Add(
+                        new TextBlock
+                        {
+                            Text = "No pages yet — name one below.",
+                            Opacity = 0.55,
+                            FontSize = 12,
+                            FontStyle =
+                                Windows.UI.Text.FontStyle.Italic,
+                            TextWrapping = TextWrapping.Wrap
+                        });
+                }
+
+                if (selected == null)
+                {
+                    PageTitle.Text = "Select a page";
+
+                    StepsList.Children.Add(
+                        new TextBlock
+                        {
+                            Text = "Pick a page on the left to see " +
+                                   "its steps.",
+                            Opacity = 0.55,
+                            FontSize = 12,
+                            FontStyle =
+                                Windows.UI.Text.FontStyle.Italic,
+                            TextWrapping = TextWrapping.Wrap
+                        });
+
+                    return;
+                }
+
+                PageTitle.Text = selected.Title;
+
+                for (int i = 0; i < selected.Steps.Count; i++)
+                {
+                    PlanStep step = selected.Steps[i];
+                    int index = i;
+
+                    Border card =
+                        new Border
+                        {
+                            Background =
+                                TB(currentTheme.CardBackground),
+                            BorderBrush =
+                                TB(currentTheme.CardBorder),
+                            BorderThickness = new Thickness(1),
+                            CornerRadius = new CornerRadius(10),
+                            Padding = new Thickness(4)
+                        };
+
+                    Grid row =
+                        new Grid
+                        {
+                            Padding = new Thickness(10, 6, 10, 6)
+                        };
+
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width = new GridLength(
+                                1, GridUnitType.Star)
+                        });
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width = GridLength.Auto
+                        });
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width = GridLength.Auto
+                        });
+                    row.ColumnDefinitions.Add(
+                        new ColumnDefinition
+                        {
+                            Width = GridLength.Auto
+                        });
+
+                    card.Child = row;
+
+                    CheckBox chk =
+                        new CheckBox
+                        {
+                            Content = new TextBlock
+                            {
+                                Text =
+                                    $"{index + 1}. {step.Title}",
+                                FontSize = 14,
+                                FontFamily =
+                                    new Microsoft.UI.Xaml.Media.FontFamily(
+                                        "Cambria"),
+                                Foreground =
+                                    TB(currentTheme.InkText),
+                                TextWrapping = TextWrapping.Wrap,
+                                Opacity = step.IsCompleted ? 0.55 : 1.0
+                            },
+                            IsChecked = step.IsCompleted,
+                            VerticalAlignment =
+                                VerticalAlignment.Center,
+                            MinWidth = 0
+                        };
+
+                    chk.Checked += (s, e) =>
+                        SetPlanStepDone(selected, step, true);
+                    chk.Unchecked += (s, e) =>
+                        SetPlanStepDone(selected, step, false);
+
+                    Button upBtn = new Button
+                    {
+                        Content = "▲",
+                        FontSize = 10,
+                        Padding = new Thickness(8, 2, 8, 2),
+                        CornerRadius = new CornerRadius(6),
+                        Background = TB(currentTheme.GhostButton),
+                        Foreground = TB(currentTheme.GhostButtonText),
+                        BorderBrush = TB(currentTheme.GhostButtonBorder),
+                        BorderThickness = new Thickness(1),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(6, 0, 0, 0),
+                        IsEnabled = index > 0
+                    };
+
+                    Button downBtn = new Button
+                    {
+                        Content = "▼",
+                        FontSize = 10,
+                        Padding = new Thickness(8, 2, 8, 2),
+                        CornerRadius = new CornerRadius(6),
+                        Background = TB(currentTheme.GhostButton),
+                        Foreground = TB(currentTheme.GhostButtonText),
+                        BorderBrush = TB(currentTheme.GhostButtonBorder),
+                        BorderThickness = new Thickness(1),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(4, 0, 0, 0),
+                        IsEnabled = index < selected.Steps.Count - 1
+                    };
+
+                    Button rmBtn = new Button
+                    {
+                        Content = "✕",
+                        FontSize = 10,
+                        Padding = new Thickness(8, 2, 8, 2),
+                        CornerRadius = new CornerRadius(6),
+                        Background = TB(currentTheme.DangerButton),
+                        Foreground =
+                            TB(currentTheme.DangerButtonText),
+                        BorderThickness = new Thickness(0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(4, 0, 0, 0)
+                    };
+
+                    upBtn.Click += (s, e) =>
+                        MovePlanStep(selected, step, -1);
+                    downBtn.Click += (s, e) =>
+                        MovePlanStep(selected, step, 1);
+                    rmBtn.Click += (s, e) =>
+                        RemovePlanStep(selected, step);
+
+                    Grid.SetColumn(chk, 0);
+                    Grid.SetColumn(upBtn, 1);
+                    Grid.SetColumn(downBtn, 2);
+                    Grid.SetColumn(rmBtn, 3);
+
+                    row.Children.Add(chk);
+                    row.Children.Add(upBtn);
+                    row.Children.Add(downBtn);
+                    row.Children.Add(rmBtn);
+
+                    StepsList.Children.Add(card);
+                }
+
+                if (selected.Steps.Count == 0)
+                {
+                    StepsList.Children.Add(
+                        new TextBlock
+                        {
+                            Text = "No steps yet — break the goal " +
+                                   "down below, one per line.",
+                            Opacity = 0.55,
+                            FontSize = 12,
+                            FontStyle =
+                                Windows.UI.Text.FontStyle.Italic,
+                            TextWrapping = TextWrapping.Wrap
+                        });
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void SetPlanStepDone(
+            PlanPage page,
+            PlanStep step,
+            bool done)
+        {
+            step.IsCompleted = done;
+            page.LastModified = DateTime.UtcNow;
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        private void MovePlanStep(
+            PlanPage page,
+            PlanStep step,
+            int direction)
+        {
+            int index = page.Steps.IndexOf(step);
+
+            if (index < 0)
+                return;
+
+            int target = index + direction;
+
+            if (target < 0 || target >= page.Steps.Count)
+                return;
+
+            page.Steps.RemoveAt(index);
+            page.Steps.Insert(target, step);
+            page.LastModified = DateTime.UtcNow;
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        private void RemovePlanStep(
+            PlanPage page,
+            PlanStep step)
+        {
+            page.Steps.Remove(step);
+            page.LastModified = DateTime.UtcNow;
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        private void AddPage_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AddPage();
+        }
+
+        private void PageInput_KeyDown(
+            object sender,
+            KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+                AddPage();
+        }
+
+        private void AddPage()
+        {
+            string title = PageInput.Text.Trim();
+
+            PlanPage page = planPageManager.CreatePage(title);
+
+            selectedPlanPageId = page.Id;
+            PageInput.Text = "";
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        private async void DeletePage_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PlanPage? page = SelectedPlanPage();
+
+            if (page == null)
+                return;
+
+            bool confirmed = await ShowConfirmationAsync(
+                "Delete Page",
+                $"Delete \"{page.Title}\" and all its steps?");
+
+            if (!confirmed)
+                return;
+
+            page.IsDeleted = true;
+            page.LastModified = DateTime.UtcNow;
+
+            selectedPlanPageId = null;
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        private void AddStep_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AddStep();
+        }
+
+        private void StepInput_KeyDown(
+            object sender,
+            KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+                AddStep();
+        }
+
+        private void AddStep()
+        {
+            PlanPage? page = SelectedPlanPage();
+
+            if (page == null)
+                return;
+
+            string title = StepInput.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(title))
+                return;
+
+            page.Steps.Add(
+                new PlanStep
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Title = title,
+                    IsCompleted = false
+                });
+
+            page.LastModified = DateTime.UtcNow;
+
+            StepInput.Text = "";
+
+            SavePlanPages();
+            RefreshPlanningView();
+        }
+
+        // ============================================================
         // THEME
         // ============================================================
 
@@ -3245,6 +3710,14 @@ namespace LochlanProductivity
             OptionsButton.BorderBrush = TB(t.CardBorder);
             OptionsButton.Foreground = TB(t.InkText);
 
+            PlanningButton.Background = TB(t.CardBackground);
+            PlanningButton.BorderBrush = TB(t.CardBorder);
+            PlanningButton.Foreground = TB(t.InkText);
+
+            ScheduledTasksButton.Background = TB(t.CardBackground);
+            ScheduledTasksButton.BorderBrush = TB(t.CardBorder);
+            ScheduledTasksButton.Foreground = TB(t.InkText);
+
             SyncStatusText.Foreground = TB(t.MutedText);
             SyncStatusDot.Fill = TB(t.SyncDot);
 
@@ -3283,6 +3756,22 @@ namespace LochlanProductivity
             LongTermNoteBox.Background = TB(t.CardBackground);
             LongTermNoteBox.BorderBrush = TB(t.CardBorder);
             LongTermNoteBox.Foreground = TB(t.InkText);
+
+            PagesHeader.Foreground = TB(t.InkText);
+            PageInput.Background = TB(t.InputBackground);
+            PageInput.BorderBrush = TB(t.InputBorder);
+            PageInput.Foreground = TB(t.InkText);
+            AddPageButton.Background = TB(t.SecondaryButton);
+            AddPageButton.Foreground = TB(t.SecondaryButtonText);
+            PageTitle.Foreground = TB(t.InkText);
+            DeletePageButton.Background = TB(t.DangerButton);
+            DeletePageButton.Foreground = TB(t.DangerButtonText);
+            DeletePageButton.BorderBrush = TB(t.DangerButtonBorder);
+            StepInput.Background = TB(t.InputBackground);
+            StepInput.BorderBrush = TB(t.InputBorder);
+            StepInput.Foreground = TB(t.InkText);
+            AddStepButton.Background = TB(t.PrimaryButton);
+            AddStepButton.Foreground = TB(t.PrimaryButtonText);
         }
 
         private double NextSortOrder()
@@ -7975,7 +8464,8 @@ namespace LochlanProductivity
                         blockedSiteStore.Domains,
                         dailyPromptManager.LastPromptDate,
                         longTermNoteText,
-                        longTermNoteModified);
+                        longTermNoteModified,
+                        planPageManager.Pages);
 
                 string json =
                     JsonSerializer.Serialize(
@@ -8069,6 +8559,23 @@ namespace LochlanProductivity
                 blockedSiteStore.Replace(
                     backup.BlockedSites ?? new());
 
+                planPageManager.Pages.Clear();
+
+                foreach (PlanPage page in backup.PlanPages ?? new())
+                {
+                    if (page == null ||
+                        string.IsNullOrWhiteSpace(page.Id))
+                    {
+                        continue;
+                    }
+
+                    page.Steps ??= new List<PlanStep>();
+
+                    planPageManager.Pages.Add(page);
+                }
+
+                planPageManager.Save();
+
                 if (backup.LastDailyPromptDate != null)
                 {
                     dailyPromptManager.ApplySyncedDate(
@@ -8084,6 +8591,7 @@ namespace LochlanProductivity
                 QueueAutoSync();
 
                 RefreshTaskList();
+                RefreshPlanningView();
                 UpdateFocusModeLock();
                 UpdateScheduledBlockingState();
                 websiteBlocksApplied = null;

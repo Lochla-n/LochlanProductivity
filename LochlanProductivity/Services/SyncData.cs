@@ -63,5 +63,10 @@ namespace LochlanProductivity.Services
         public string LongTermNote { get; set; } = "";
 
         public DateTime? LongTermNoteModified { get; set; }
+
+        // Planning pages (ordered step lists). Whole-page
+        // newest-wins merge; missing on old syncdata.json files.
+        public List<PlanPage> PlanPages { get; set; } =
+            new();
     }
 }
