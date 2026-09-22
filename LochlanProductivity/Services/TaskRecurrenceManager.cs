@@ -116,9 +116,10 @@ namespace LochlanProductivity.Services
         // ============================================================
         // CALCULATE NEXT DUE DATE
         //
-        // Fast-forwards past missed cycles so a task that was not
-        // completed for several days resurfaces with a due date in
-        // the future instead of staying stuck in the past.
+        // Fast-forwards past missed cycles so a stale occurrence
+        // resurfaces. Landing ON today is correct (that IS today's
+        // occurrence) — only strictly-past dates keep advancing.
+        // Used solely by UpdateRecurringTasksIfDue.
         // ============================================================
 
         public DateTime CalculateNextDueDate(
@@ -131,8 +132,8 @@ namespace LochlanProductivity.Services
 
             int guard = 0;
 
-            while (next.Date <= DateTime.Today &&
-                   guard++ < 3650)
+            while (next.Date < DateTime.Today &&
+                    guard++ < 3650)
             {
                 DateTime advanced =
                     AdvanceOnce(task, next);
