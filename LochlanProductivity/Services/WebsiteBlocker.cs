@@ -821,6 +821,11 @@ namespace LochlanProductivity.Services
 
         public List<string> Domains { get; } = new();
 
+        // Removal tombstones: domains the user deleted. Synced so a
+        // removal on one computer is not resurrected by the union
+        // merge from the other computer's stale list.
+        public List<string> RemovedDomains { get; } = new();
+
         public BlockedSitesManager()
         {
             Load();
@@ -847,6 +852,13 @@ namespace LochlanProductivity.Services
 
             Domains.Sort(StringComparer.Ordinal);
 
+            // Re-blocking a removed domain clears its tombstone.
+            RemovedDomains.RemoveAll(
+                existing =>
+                    existing.Equals(
+                        normalized,
+                        StringComparison.OrdinalIgnoreCase));
+
             Save();
 
             return true;
@@ -866,13 +878,25 @@ namespace LochlanProductivity.Services
 
             Domains.Remove(match);
 
+            if (!RemovedDomains.Any(
+                existing =>
+                    existing.Equals(
+                        match,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                RemovedDomains.Add(match);
+
+                RemovedDomains.Sort(StringComparer.Ordinal);
+            }
+
             Save();
 
             return true;
         }
 
         // Used by SyncManager: absorb the other computer's sites
-        // (union semantics). Returns how many were new.
+        // (union semantics), except domains this computer removed.
+        // Returns how many were new.
         public int Absorb(IEnumerable<string> domains)
         {
             int added = 0;
@@ -884,6 +908,15 @@ namespace LochlanProductivity.Services
 
                 if (normalized == null)
                     continue;
+
+                if (RemovedDomains.Any(
+                    removed =>
+                        removed.Equals(
+                            normalized,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
 
                 if (Domains.Any(
                     existing =>
@@ -907,6 +940,57 @@ namespace LochlanProductivity.Services
             }
 
             return added;
+        }
+
+        // Used by SyncManager: union the other computer's removal
+        // tombstones into ours, then purge any locally-listed domains
+        // they cover (e.g. removed elsewhere while offline).
+        // Returns how many local entries were purged.
+        public int AbsorbRemovals(IEnumerable<string> removed)
+        {
+            int purged = 0;
+            bool changed = false;
+
+            foreach (string domain in removed ?? new List<string>())
+            {
+                string? normalized =
+                    HostsFileBlocker.NormalizeDomain(domain);
+
+                if (normalized == null)
+                    continue;
+
+                if (!RemovedDomains.Any(
+                    existing =>
+                        existing.Equals(
+                            normalized,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    RemovedDomains.Add(normalized);
+                    changed = true;
+                }
+
+                string? match =
+                    Domains.FirstOrDefault(
+                        existing =>
+                            existing.Equals(
+                                normalized,
+                                StringComparison.OrdinalIgnoreCase));
+
+                if (match != null)
+                {
+                    Domains.Remove(match);
+                    purged++;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                RemovedDomains.Sort(StringComparer.Ordinal);
+                Save();
+            }
+
+            return purged;
         }
 
         public bool ContainsAll(IEnumerable<string> domains) =>
@@ -939,6 +1023,15 @@ namespace LochlanProductivity.Services
             }
 
             Domains.Sort(StringComparer.Ordinal);
+
+            // Import wins: restored domains leave the tombstones so
+            // a later sync does not immediately purge them again.
+            RemovedDomains.RemoveAll(
+                removed => Domains.Any(
+                    existing =>
+                        existing.Equals(
+                            removed,
+                            StringComparison.OrdinalIgnoreCase)));
 
             Save();
         }
@@ -977,6 +1070,23 @@ namespace LochlanProductivity.Services
                         Domains.Add(normalized);
                     }
                 }
+
+                if (loaded.RemovedDomains != null)
+                {
+                    foreach (string domain in loaded.RemovedDomains)
+                    {
+                        string? normalized =
+                            HostsFileBlocker.NormalizeDomain(domain);
+
+                        if (normalized != null &&
+                            !RemovedDomains.Contains(
+                                normalized,
+                                StringComparer.OrdinalIgnoreCase))
+                        {
+                            RemovedDomains.Add(normalized);
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -1001,7 +1111,8 @@ namespace LochlanProductivity.Services
                     JsonSerializer.Serialize(
                         new BlockedSitesData
                         {
-                            Domains = Domains.ToList()
+                            Domains = Domains.ToList(),
+                            RemovedDomains = RemovedDomains.ToList()
                         },
                         new JsonSerializerOptions
                         {
@@ -1025,5 +1136,7 @@ namespace LochlanProductivity.Services
     public class BlockedSitesData
     {
         public List<string> Domains { get; set; } = new();
+
+        public List<string> RemovedDomains { get; set; } = new();
     }
 }

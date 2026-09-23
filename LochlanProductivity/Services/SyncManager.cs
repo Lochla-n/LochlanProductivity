@@ -292,7 +292,8 @@ namespace LochlanProductivity.Services
             DateTime? lastDailyPromptDate = null,
             string? longTermNote = null,
             DateTime? longTermNoteModified = null,
-            IEnumerable<PlanPage>? planPages = null)
+            IEnumerable<PlanPage>? planPages = null,
+            IEnumerable<string>? removedBlockedSites = null)
         {
             return new SyncData
             {
@@ -315,6 +316,10 @@ namespace LochlanProductivity.Services
                 BlockedSites =
                     new List<string>(
                         blockedSites),
+
+                RemovedBlockedSites =
+                    new List<string>(
+                        removedBlockedSites),
 
                 LastDailyPromptDate =
                     lastDailyPromptDate?.Date,
@@ -417,6 +422,9 @@ namespace LochlanProductivity.Services
                 data.BlockedSites ??=
                     new List<string>();
 
+                data.RemovedBlockedSites ??=
+                    new List<string>();
+
                 data.LongTermNote ??= "";
 
                 data.PlanPages ??=
@@ -469,7 +477,8 @@ namespace LochlanProductivity.Services
                     lastDailyPromptDate,
                     longTermNote,
                     longTermNoteModified,
-                    planPages);
+                    planPages,
+                    blockedSites.RemovedDomains);
 
             return await SaveSyncDataAsync(data);
         }
@@ -588,6 +597,13 @@ namespace LochlanProductivity.Services
                         sharedData.BlockedSites,
                         blockedSites);
 
+                // Removal tombstones win over additions: union them
+                // first (purging anything they cover locally) so the
+                // Absorb above/below can never resurrect them.
+                siteChanges +=
+                    blockedSites.AbsorbRemovals(
+                        sharedData.RemovedBlockedSites);
+
                 int pageChanges = 0;
 
                 if (planPageManager != null)
@@ -676,7 +692,8 @@ namespace LochlanProductivity.Services
                         mergedPromptDate,
                         mergedNoteText,
                         mergedNoteModified,
-                        planPageManager?.Pages);
+                        planPageManager?.Pages,
+                        blockedSites.RemovedDomains);
 
                 bool saved =
                     await SaveSyncDataAsync(merged);

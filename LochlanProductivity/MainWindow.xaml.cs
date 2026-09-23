@@ -8465,7 +8465,8 @@ namespace LochlanProductivity
                         dailyPromptManager.LastPromptDate,
                         longTermNoteText,
                         longTermNoteModified,
-                        planPageManager.Pages);
+                        planPageManager.Pages,
+                        blockedSiteStore.RemovedDomains);
 
                 string json =
                     JsonSerializer.Serialize(
@@ -8558,6 +8559,9 @@ namespace LochlanProductivity
 
                 blockedSiteStore.Replace(
                     backup.BlockedSites ?? new());
+
+                blockedSiteStore.AbsorbRemovals(
+                    backup.RemovedBlockedSites ?? new());
 
                 planPageManager.Pages.Clear();
 

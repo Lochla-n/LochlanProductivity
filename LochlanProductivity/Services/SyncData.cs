@@ -47,6 +47,12 @@ namespace LochlanProductivity.Services
         public List<string> BlockedSites { get; set; } =
             new();
 
+        // Website removal tombstones so a deletion on one computer
+        // is not resurrected by the other's stale list. Missing on
+        // old syncdata.json files.
+        public List<string> RemovedBlockedSites { get; set; } =
+            new();
+
         // ============================================================
         // DAILY PROMPT
         //
