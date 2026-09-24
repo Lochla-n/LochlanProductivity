@@ -53,6 +53,8 @@
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Export Backup…" Click="ExportBackupButton_Click"/>
                             <MenuFlyoutItem Text="Import Backup…" Click="ImportBackupButton_Click"/>
+                            <MenuFlyoutItem Text="Export Task List…" Click="ExportTaskListButton_Click"/>
+                            <MenuFlyoutItem Text="Import Task List…" Click="ImportTaskListButton_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="Settings" Click="SettingsButton_Click"/>
                         </MenuFlyout>

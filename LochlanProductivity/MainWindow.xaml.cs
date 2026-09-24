@@ -8612,6 +8612,707 @@ namespace LochlanProductivity
             }
         }
 
+        // ============================================================
+        // TASK LIST EXPORT / IMPORT (Markdown)
+        //
+        // Human-legible AND machine-readable: one `- [ ] Title
+        // (due: ..., priority: ..., id: ...)` line per task. The id
+        // makes re-imports idempotent (match + update instead of
+        // duplicating). Anything in parens is optional — bare
+        // `- [ ] Title` lines import fine with sensible defaults.
+        // ============================================================
+
+        private async void ExportTaskListButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                FileSavePicker picker =
+                    new FileSavePicker
+                    {
+                        SuggestedStartLocation =
+                            PickerLocationId.DocumentsLibrary,
+                        SuggestedFileName =
+                            $"lochlan-tasks-{DateTime.Now:yyyy-MM-dd}"
+                    };
+
+                picker.FileTypeChoices.Add(
+                    "Markdown",
+                    new List<string> { ".md" });
+
+                IntPtr hwnd =
+                    WindowNative.GetWindowHandle(this);
+
+                InitializeWithWindow.Initialize(picker, hwnd);
+
+                StorageFile? file =
+                    await picker.PickSaveFileAsync();
+
+                if (file == null)
+                    return;
+
+                List<TodoTask> today = ActiveTasks
+                    .Where(task =>
+                        !task.IsLongTerm &&
+                        task.DueDate.Date <= DateTime.Today)
+                    .OrderBy(task => task.IsCompleted)
+                    .ThenBy(task => task.SortOrder)
+                    .ThenByDescending(task => (int)task.Priority)
+                    .ThenBy(GetEffectiveDeadline)
+                    .ThenBy(
+                        task => task.Title,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                List<TodoTask> comingUp = ActiveTasks
+                    .Where(task =>
+                        !task.IsLongTerm &&
+                        task.DueDate.Date > DateTime.Today)
+                    .OrderBy(task => task.DueDate)
+                    .ThenBy(
+                        task => task.Title,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                List<TodoTask> recurring = ActiveTasks
+                    .Where(task =>
+                        task.IsRecurring && !task.IsLongTerm)
+                    .OrderBy(task => task.DueDate)
+                    .ThenBy(
+                        task => task.Title,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                List<TodoTask> notes = ActiveTasks
+                    .Where(task => task.IsLongTerm)
+                    .OrderBy(
+                        task => task.Title,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                System.Text.StringBuilder md = new();
+
+                md.AppendLine(
+                    $"# Lochlan Tasks — {DateTime.Now:yyyy-MM-dd}");
+                md.AppendLine();
+                md.AppendLine(
+                    "Edit freely (or hand to an AI): add `- [ ]` " +
+                    "lines, tick boxes, change dates — then Import " +
+                    "Task List. Matching is by `id`.");
+                md.AppendLine();
+
+                md.AppendLine("## Today's Tasks");
+                md.AppendLine();
+
+                foreach (TodoTask task in today)
+                    md.AppendLine(TaskListLine(task, true));
+
+                md.AppendLine();
+                md.AppendLine("## Coming Up");
+                md.AppendLine();
+
+                foreach (TodoTask task in comingUp)
+                    md.AppendLine(TaskListLine(task, true));
+
+                md.AppendLine();
+                md.AppendLine("## Recurring");
+                md.AppendLine();
+
+                foreach (TodoTask task in recurring)
+                    md.AppendLine(TaskListLine(task, true, true));
+
+                md.AppendLine();
+                md.AppendLine("## Long-Term Notes");
+                md.AppendLine();
+
+                foreach (TodoTask task in notes)
+                    md.AppendLine(TaskListLine(task, false));
+
+                await File.WriteAllTextAsync(
+                    file.Path, md.ToString());
+
+                await ShowSimpleMessageAsync(
+                    $"Task list saved to:\n{file.Path}");
+            }
+            catch (Exception ex)
+            {
+                await ShowSimpleMessageAsync(
+                    $"Export failed.\n\n{ex.Message}");
+            }
+        }
+
+        private static string TaskListLine(
+            TodoTask task,
+            bool withDue,
+            bool withRepeats = false)
+        {
+            System.Text.StringBuilder line = new();
+
+            line.Append(task.IsCompleted ? "- [x] " : "- [ ] ");
+            line.Append(task.Title.Trim());
+            line.Append(" (");
+
+            List<string> meta = new();
+
+            if (withDue)
+            {
+                meta.Add($"due: {task.DueDate:yyyy-MM-dd}");
+
+                if (task.DueTimeOfDay != null)
+                {
+                    meta.Add(
+                        $"time: {task.DueTimeOfDay.Value:hh\\:mm}");
+                }
+            }
+
+            meta.Add($"priority: {task.Priority}");
+
+            if (withRepeats && task.IsRecurring)
+            {
+                meta.Add($"repeats: {task.Recurrence}");
+            }
+
+            meta.Add($"id: {task.Id}");
+
+            line.Append(string.Join(", ", meta));
+            line.Append(')');
+
+            return line.ToString();
+        }
+
+        private enum TaskListSection
+        {
+            None,
+            Today,
+            ComingUp,
+            Recurring,
+            LongTerm
+        }
+
+        private async void ImportTaskListButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                FileOpenPicker picker =
+                    new FileOpenPicker
+                    {
+                        ViewMode = PickerViewMode.List,
+                        SuggestedStartLocation =
+                            PickerLocationId.DocumentsLibrary
+                    };
+
+                picker.FileTypeFilter.Add(".md");
+
+                IntPtr hwnd =
+                    WindowNative.GetWindowHandle(this);
+
+                InitializeWithWindow.Initialize(picker, hwnd);
+
+                StorageFile? file =
+                    await picker.PickSingleFileAsync();
+
+                if (file == null)
+                    return;
+
+                string[] lines =
+                    await File.ReadAllLinesAsync(file.Path);
+
+                int added = 0;
+                int updated = 0;
+                int skipped = 0;
+
+                TaskListSection section = TaskListSection.None;
+
+                foreach (string rawLine in lines)
+                {
+                    string line = rawLine.Trim();
+
+                    if (line.StartsWith(
+                        "#",
+                        StringComparison.Ordinal))
+                    {
+                        string header = line.TrimStart('#').Trim();
+
+                        if (header.StartsWith(
+                            "today",
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            section = TaskListSection.Today;
+                        }
+                        else if (
+                            header.IndexOf(
+                                "coming up",
+                                StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            header.IndexOf(
+                                "upcoming",
+                                StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            header.IndexOf(
+                                "future",
+                                StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            section = TaskListSection.ComingUp;
+                        }
+                        else if (header.StartsWith(
+                            "recur",
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            section = TaskListSection.Recurring;
+                        }
+                        else if (
+                            header.IndexOf(
+                                "long-term",
+                                StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            header.IndexOf(
+                                "long term",
+                                StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            header.IndexOf(
+                                "note",
+                                StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            section = TaskListSection.LongTerm;
+                        }
+                        else
+                        {
+                            section = TaskListSection.None;
+                        }
+
+                        continue;
+                    }
+
+                    if (section == TaskListSection.None)
+                        continue;
+
+                    System.Text.RegularExpressions.Match taskMatch =
+                        System.Text.RegularExpressions.Regex.Match(
+                            line,
+                            @"^-\s*\[( |x|X)\]\s*(.+?)\s*$");
+
+                    if (!taskMatch.Success)
+                        continue;
+
+                    bool done =
+                        !taskMatch.Groups[1].Value.Equals(
+                            " ",
+                            StringComparison.Ordinal);
+
+                    string rest = taskMatch.Groups[2].Value;
+
+                    string title = rest;
+                    string? id = null;
+                    DateTime? due = null;
+                    TimeSpan? time = null;
+                    TaskPriority? priority = null;
+                    string? repeats = null;
+                    string? parsedTitle = null;
+
+                    System.Text.RegularExpressions.Match metaMatch =
+                        System.Text.RegularExpressions.Regex.Match(
+                            rest,
+                            @"\(([^()]*)\)\s*$");
+
+                    if (metaMatch.Success)
+                    {
+                        bool anyKey = false;
+                        string? metaId = null;
+                        DateTime? metaDue = null;
+                        TimeSpan? metaTime = null;
+                        TaskPriority? metaPriority = null;
+                        string? metaRepeats = null;
+
+                        foreach (string part in metaMatch
+                            .Groups[1].Value.Split(','))
+                        {
+                            string[] kv = part.Split(
+                                new[] { ':' }, 2);
+
+                            if (kv.Length != 2)
+                                continue;
+
+                            string key =
+                                kv[0].Trim().ToLowerInvariant();
+                            string value = kv[1].Trim();
+
+                            switch (key)
+                            {
+                                case "due":
+                                    if (DateTime.TryParse(
+                                        value,
+                                        out DateTime parsedDue))
+                                    {
+                                        metaDue = parsedDue.Date;
+                                        anyKey = true;
+                                    }
+                                    break;
+
+                                case "time":
+                                    if (DateTime.TryParse(
+                                        value,
+                                        out DateTime parsedTime))
+                                    {
+                                        metaTime =
+                                            parsedTime.TimeOfDay;
+                                        anyKey = true;
+                                    }
+                                    else if (TimeSpan.TryParse(
+                                        value,
+                                        out TimeSpan parsedSpan))
+                                    {
+                                        metaTime = parsedSpan;
+                                        anyKey = true;
+                                    }
+                                    break;
+
+                                case "priority":
+                                    if (Enum.TryParse<TaskPriority>(
+                                        value,
+                                        true,
+                                        out TaskPriority parsedPriority) &&
+                                        Enum.IsDefined(
+                                            typeof(TaskPriority),
+                                            parsedPriority))
+                                    {
+                                        metaPriority = parsedPriority;
+                                        anyKey = true;
+                                    }
+                                    break;
+
+                                case "repeats":
+                                    metaRepeats = value;
+                                    anyKey = true;
+                                    break;
+
+                                case "id":
+                                    if (!string.IsNullOrWhiteSpace(
+                                        value))
+                                    {
+                                        metaId = value;
+                                        anyKey = true;
+                                    }
+                                    break;
+                            }
+                        }
+
+                        if (anyKey)
+                        {
+                            // Real meta keys: everything before the
+                            // parens is the title.
+                            parsedTitle = rest.Substring(
+                                0,
+                                metaMatch.Index).Trim();
+                            id = metaId;
+                            due = metaDue;
+                            time = metaTime;
+                            priority = metaPriority;
+                            repeats = metaRepeats;
+                        }
+
+                        // Trailing parens with no real keys stay part
+                        // of the title (e.g. "HW (10)").
+                    }
+
+                    if (parsedTitle != null)
+                        title = parsedTitle;
+
+                    title = title.Trim();
+
+                    if (string.IsNullOrWhiteSpace(title))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    TodoTask? existing = null;
+
+                    if (!string.IsNullOrWhiteSpace(id))
+                    {
+                        existing = tasks.FirstOrDefault(
+                            task => task.Id.Equals(
+                                id,
+                                StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (existing != null)
+                    {
+                        if (existing.IsDeleted)
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        bool changed = false;
+
+                        if (!existing.Title.Equals(
+                            title,
+                            StringComparison.Ordinal))
+                        {
+                            existing.Title = title;
+                            changed = true;
+                        }
+
+                        if (done != existing.IsCompleted)
+                        {
+                            existing.IsCompleted = done;
+                            existing.LastCompletedDate =
+                                done ? DateTime.Today : null;
+                            changed = true;
+                        }
+
+                        if (section == TaskListSection.LongTerm &&
+                            !existing.IsLongTerm)
+                        {
+                            existing.IsLongTerm = true;
+                            changed = true;
+                        }
+
+                        if (due != null &&
+                            due.Value.Date !=
+                                existing.DueDate.Date)
+                        {
+                            existing.DueDate = due.Value.Date;
+                            changed = true;
+                        }
+
+                        if (time != null &&
+                            time != existing.DueTimeOfDay)
+                        {
+                            existing.DueTimeOfDay = time;
+                            changed = true;
+                        }
+
+                        if (priority != null &&
+                            priority.Value != existing.Priority)
+                        {
+                            existing.Priority = priority.Value;
+                            changed = true;
+                        }
+
+                        if (section == TaskListSection.Recurring &&
+                            repeats != null &&
+                            ParseRepeats(
+                                repeats,
+                                existing))
+                        {
+                            changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            existing.LastModified = DateTime.UtcNow;
+                            updated++;
+                        }
+
+                        continue;
+                    }
+
+                    TodoTask created = new TodoTask
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Title = title,
+                        IsCompleted = done,
+                        LastCompletedDate =
+                            done ? DateTime.Today : null,
+                        IsLongTerm =
+                            section == TaskListSection.LongTerm,
+                        DueDate =
+                            due ?? DateTime.Today,
+                        DueTimeOfDay = time,
+                        Priority = priority ?? TaskPriority.Normal,
+                        BlockedGroups = new List<string>(),
+                        BlockedApps = new List<BlockedApp>(),
+                        SortOrder = NextSortOrder(),
+                        LastModified = DateTime.UtcNow
+                    };
+
+                    if (section == TaskListSection.Recurring)
+                    {
+                        created.IsRecurring = true;
+
+                        if (!ParseRepeats(
+                            repeats ?? "daily",
+                            created))
+                        {
+                            created.Recurrence =
+                                RecurrenceType.Daily;
+                            created.RecurrenceInterval = 1;
+                        }
+                    }
+
+                    ApplyStickyBlockingPolicy(created);
+
+                    tasks.Add(created);
+                    added++;
+                }
+
+                await SaveTasksAsync();
+
+                RefreshTaskList();
+                UpdateFocusModeLock();
+                UpdateScheduledBlockingState();
+                UpdateWebsiteBlockingState();
+                UpdateBlockingStatus();
+
+                await ShowSimpleMessageAsync(
+                    $"Import done: {added} added, {updated} updated" +
+                    (skipped > 0 ? $", {skipped} skipped." : "."));
+            }
+            catch (Exception ex)
+            {
+                await ShowSimpleMessageAsync(
+                    $"Import failed.\n\n{ex.Message}");
+            }
+        }
+
+        // Parses "Every day" / "Every 3 days" / "EveryNDays" /
+        // "Mon, Wed" style repeat text (as written by export) onto
+        // a task. Returns true only when something actually changed,
+        // so re-importing an untouched export reports no updates.
+        private static bool ParseRepeats(
+            string repeats,
+            TodoTask task)
+        {
+            if (string.IsNullOrWhiteSpace(repeats))
+                return false;
+
+            string text = repeats.Trim().ToLowerInvariant();
+
+            RecurrenceType targetRec;
+            int targetInterval = task.RecurrenceInterval;
+            List<DayOfWeek>? targetDays = null;
+
+            if (text.StartsWith(
+                "every day",
+                StringComparison.Ordinal) ||
+                text.Equals(
+                    "daily",
+                    StringComparison.Ordinal))
+            {
+                targetRec = RecurrenceType.Daily;
+            }
+            else if (text.Equals(
+                "everyndays",
+                StringComparison.Ordinal))
+            {
+                targetRec = RecurrenceType.EveryNDays;
+
+                if (targetInterval < 1)
+                    targetInterval = 1;
+            }
+            else if (text.Equals(
+                "weekly",
+                StringComparison.Ordinal) ||
+                text.Equals(
+                    "weeklydays",
+                    StringComparison.Ordinal))
+            {
+                targetRec = RecurrenceType.WeeklyDays;
+                targetDays =
+                    new List<DayOfWeek>(
+                        task.RecurrenceDays ?? new List<DayOfWeek>());
+            }
+            else
+            {
+                System.Text.RegularExpressions.Match everyN =
+                    System.Text.RegularExpressions.Regex.Match(
+                        text,
+                        @"every\s+(\d+)\s+days?");
+
+                if (everyN.Success &&
+                    int.TryParse(
+                        everyN.Groups[1].Value,
+                        out int interval) &&
+                    interval >= 1)
+                {
+                    targetRec = RecurrenceType.EveryNDays;
+                    targetInterval = interval;
+                }
+                else
+                {
+                    targetDays = ParseDayList(text);
+
+                    if (targetDays.Count == 0)
+                        return false;
+
+                    targetRec = RecurrenceType.WeeklyDays;
+                }
+            }
+
+            bool changed = false;
+
+            if (!task.IsRecurring)
+            {
+                task.IsRecurring = true;
+                changed = true;
+            }
+
+            if (task.Recurrence != targetRec)
+            {
+                task.Recurrence = targetRec;
+                changed = true;
+            }
+
+            if (targetRec == RecurrenceType.EveryNDays &&
+                task.RecurrenceInterval != targetInterval)
+            {
+                task.RecurrenceInterval = targetInterval;
+                changed = true;
+            }
+
+            if (targetDays != null &&
+                !targetDays.SequenceEqual(
+                    task.RecurrenceDays ?? new List<DayOfWeek>()))
+            {
+                task.RecurrenceDays = targetDays;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static List<DayOfWeek> ParseDayList(string text)
+        {
+            Dictionary<string, DayOfWeek> dayNames =
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "mon", DayOfWeek.Monday },
+                    { "monday", DayOfWeek.Monday },
+                    { "tue", DayOfWeek.Tuesday },
+                    { "tues", DayOfWeek.Tuesday },
+                    { "tuesday", DayOfWeek.Tuesday },
+                    { "wed", DayOfWeek.Wednesday },
+                    { "wednesday", DayOfWeek.Wednesday },
+                    { "thu", DayOfWeek.Thursday },
+                    { "thur", DayOfWeek.Thursday },
+                    { "thurs", DayOfWeek.Thursday },
+                    { "thursday", DayOfWeek.Thursday },
+                    { "fri", DayOfWeek.Friday },
+                    { "friday", DayOfWeek.Friday },
+                    { "sat", DayOfWeek.Saturday },
+                    { "saturday", DayOfWeek.Saturday },
+                    { "sun", DayOfWeek.Sunday },
+                    { "sunday", DayOfWeek.Sunday }
+                };
+
+            List<DayOfWeek> days = new();
+
+            foreach (string token in text.Split(
+                new[] { ',', ' ', ';', '/' },
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (dayNames.TryGetValue(
+                    token.Trim().TrimEnd('.'),
+                    out DayOfWeek day) &&
+                    !days.Contains(day))
+                {
+                    days.Add(day);
+                }
+            }
+
+            return days;
+        }
+
 
         // ============================================================
         // LOAD GROUPS
